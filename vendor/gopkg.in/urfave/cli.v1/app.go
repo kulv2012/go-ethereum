@@ -136,6 +136,7 @@ func (a *App) Setup() {
 	}
 
 	newCmds := []Command{}
+	//遍历每一个commands 设置help字符串
 	for _, c := range a.Commands {
 		if c.HelpName == "" {
 			c.HelpName = fmt.Sprintf("%s %s", a.HelpName, c.Name)
@@ -173,7 +174,7 @@ func (a *App) Setup() {
 // Run is the entry point to the cli app. Parses the arguments slice and routes
 // to the proper flag/args combination
 func (a *App) Run(arguments []string) (err error) {
-	a.Setup()
+	a.Setup()//设置帮助指令到a.Commands 上面
 
 	// handle the completion flag separately from the flagset since
 	// completion could be attempted after a flag, but before its value was put
@@ -225,6 +226,7 @@ func (a *App) Run(arguments []string) (err error) {
 		return nil
 	}
 
+	//设置after函数的defer
 	if a.After != nil {
 		defer func() {
 			if afterErr := a.After(context); afterErr != nil {
@@ -237,6 +239,7 @@ func (a *App) Run(arguments []string) (err error) {
 		}()
 	}
 
+	//如果有Before ， 直接调用
 	if a.Before != nil {
 		beforeErr := a.Before(context)
 		if beforeErr != nil {
@@ -247,19 +250,24 @@ func (a *App) Run(arguments []string) (err error) {
 		}
 	}
 
+	//拿到参数列表, 比如如果是geth --fast console命令运行的，那么就会直接进入到下面去执行命令，也就是子命令的逻辑
 	args := context.Args()
 	if args.Present() {
 		name := args.First()
+		fmt.Println(name)
+		//下面获取对应的命令，然后去调用触发它，对于console，就是consoleCommand, 而不会执行后面的HandleAction了
 		c := a.Command(name)
 		if c != nil {
 			return c.Run(context)
 		}
 	}
 
+	//如果没有设置默认action， 那就help
 	if a.Action == nil {
 		a.Action = helpCommand.Action
 	}
 
+	//直接调用对应的a.Action 处理函数
 	// Run default Action
 	err = HandleAction(a.Action, context)
 

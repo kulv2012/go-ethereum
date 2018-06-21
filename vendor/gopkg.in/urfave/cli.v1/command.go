@@ -94,7 +94,9 @@ type Commands []Command
 
 // Run invokes the command given the context, parses ctx.Args() to generate command-specific flags
 func (c Command) Run(ctx *Context) (err error) {
+	//子命令的触发方法是比如： geth --fast console ， 处理方式大概类似，也是调用HandleAction 
 	if len(c.Subcommands) > 0 {
+		//如果这是一个子命令，还有执行函数那就调用startApp 启动一个新app
 		return c.startApp(ctx)
 	}
 

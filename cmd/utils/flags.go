@@ -91,6 +91,7 @@ GLOBAL OPTIONS:
 
 // NewApp creates an app with sane defaults.
 func NewApp(gitCommit, usage string) *cli.App {
+	//其实创建的是这个结构：vendor/gopkg.in/urfave/cli.v1/app.go 
 	app := cli.NewApp()
 	app.Name = filepath.Base(os.Args[0])
 	app.Author = ""

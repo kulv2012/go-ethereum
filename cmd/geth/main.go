@@ -147,10 +147,13 @@ var (
 )
 
 func init() {
+	//先调用初始化函数，设置app的各个参数
 	// Initialize the CLI app and start Geth
-	app.Action = geth
+	//geth的处理函数会在app.HandleAction 里面会调用
+	app.Action = geth   //默认的操作，就是启动一个节点 ， 如果有其他命令行参数，会调用到下面的Commands 里面去
 	app.HideVersion = true // we have a command to print the version
 	app.Copyright = "Copyright 2013-2017 The go-ethereum Authors"
+	//设置各个命令的处理类/函数，比如consoleCommand 最后调用到 localConsole
 	app.Commands = []cli.Command{
 		// See chaincmd.go:
 		initCommand,
@@ -185,6 +188,7 @@ func init() {
 	app.Flags = append(app.Flags, debug.Flags...)
 	app.Flags = append(app.Flags, whisperFlags...)
 
+	//before函数在app.Run的开始会先调用，也就是gopkg.in/urfave/cli.v1/app.go Run函数的前面
 	app.Before = func(ctx *cli.Context) error {
 		runtime.GOMAXPROCS(runtime.NumCPU())
 		if err := debug.Setup(ctx); err != nil {
@@ -197,6 +201,7 @@ func init() {
 		return nil
 	}
 
+	//after函数在最后调用，app.Run 里面会设置defer function
 	app.After = func(ctx *cli.Context) error {
 		debug.Exit()
 		console.Stdin.Close() // Resets terminal mode.
