@@ -58,6 +58,7 @@ type LesServer interface {
 }
 
 // Ethereum implements the Ethereum full node service.
+//全节点的以太坊结构，最重要的结构了
 type Ethereum struct {
 	config      *Config
 	chainConfig *params.ChainConfig
@@ -70,7 +71,7 @@ type Ethereum struct {
 	txPool          *core.TxPool
 	blockchain      *core.BlockChain
 	protocolManager *ProtocolManager
-	lesServer       LesServer
+	lesServer       LesServer  //轻量级节点
 
 	// DB interfaces
 	chainDb ethdb.Database // Block chain database
@@ -82,11 +83,11 @@ type Ethereum struct {
 	bloomRequests chan chan *bloombits.Retrieval // Channel receiving bloom data retrieval requests
 	bloomIndexer  *core.ChainIndexer             // Bloom indexer operating during block imports
 
-	ApiBackend *EthApiBackend
+	ApiBackend *EthApiBackend 
 
-	miner     *miner.Miner
+	miner     *miner.Miner  //挖矿,LightEthereum 轻节点没有这结构，不能挖矿
 	gasPrice  *big.Int
-	etherbase common.Address
+	etherbase common.Address  //旷工账号, LightEthereum 也没有
 
 	networkId     uint64
 	netRPCService *ethapi.PublicNetAPI
@@ -95,6 +96,7 @@ type Ethereum struct {
 }
 
 func (s *Ethereum) AddLesServer(ls LesServer) {
+	//设置轻量级客户端
 	s.lesServer = ls
 	ls.SetBloomBitsIndexer(s.bloomIndexer)
 }

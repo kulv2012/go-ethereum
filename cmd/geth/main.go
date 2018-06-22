@@ -154,6 +154,7 @@ func init() {
 	app.HideVersion = true // we have a command to print the version
 	app.Copyright = "Copyright 2013-2017 The go-ethereum Authors"
 	//设置各个命令的处理类/函数，比如consoleCommand 最后调用到 localConsole
+	//如果命令行参数里面有下面的指令，就会直接调用下面的Command.Run方法，而不调用默认的app.Action方法
 	app.Commands = []cli.Command{
 		// See chaincmd.go:
 		initCommand,

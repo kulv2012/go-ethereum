@@ -147,6 +147,7 @@ Use "ethereum dump 0" to dump the genesis block.`,
 // the zero'd block (i.e. genesis) or will fail hard if it can't succeed.
 func initGenesis(ctx *cli.Context) error {
 	// Make sure we have a valid genesis JSON
+	//根据genesis.json参数初始化一下数据库
 	genesisPath := ctx.Args().First()
 	if len(genesisPath) == 0 {
 		utils.Fatalf("Must supply path to genesis JSON file")
@@ -162,12 +163,15 @@ func initGenesis(ctx *cli.Context) error {
 		utils.Fatalf("invalid genesis file: %v", err)
 	}
 	// Open an initialise both full and light databases
+	//生成一个node结构然后设置各个服务service
 	stack := makeFullNode(ctx)
 	for _, name := range []string{"chaindata", "lightchaindata"} {
+		//区块链eth存储db结构，底层是leveldb实现, 如果数据库不存在，就新建一个
 		chaindb, err := stack.OpenDatabase(name, 0, 0)
 		if err != nil {
 			utils.Fatalf("Failed to open database: %v", err)
 		}
+		//保存一个创始块进去
 		_, hash, err := core.SetupGenesisBlock(chaindb, genesis)
 		if err != nil {
 			utils.Fatalf("Failed to write genesis block: %v", err)

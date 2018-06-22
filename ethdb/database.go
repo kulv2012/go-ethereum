@@ -33,6 +33,7 @@ import (
 
 var OpenFileLimit = 64
 
+//区块链eth存储db结构，底层是leveldb实现
 type LDBDatabase struct {
 	fn string      // filename for reporting
 	db *leveldb.DB // LevelDB instance

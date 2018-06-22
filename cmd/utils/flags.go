@@ -1126,15 +1126,21 @@ func SetDashboardConfig(ctx *cli.Context, cfg *dashboard.Config) {
 
 // RegisterEthService adds an Ethereum client to the stack.
 func RegisterEthService(stack *node.Node, cfg *eth.Config) {
+	//在stack上增加一个以太坊节点，其实就是new一个Ethereum 后加到后者的AddLesServer serviceFuncs 里面去
 	var err error
 	if cfg.SyncMode == downloader.LightSync {
+		//只需要创建一个轻节点就返回
 		err = stack.Register(func(ctx *node.ServiceContext) (node.Service, error) {
+			//类型为LightEthereum
 			return les.New(ctx, cfg)
 		})
 	} else {
+		//到stack上增加一个serviceFuncs 函数
 		err = stack.Register(func(ctx *node.ServiceContext) (node.Service, error) {
+			//全节点类型为Ethereum
 			fullNode, err := eth.New(ctx, cfg)
 			if fullNode != nil && cfg.LightServ > 0 {
+				//新建一个LesServer轻量级节点，设置到全节点上
 				ls, _ := les.NewLesServer(fullNode, cfg)
 				fullNode.AddLesServer(ls)
 			}

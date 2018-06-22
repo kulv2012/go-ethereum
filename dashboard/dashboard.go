@@ -57,6 +57,7 @@ const (
 var nextID uint32 // Next connection id
 
 // Dashboard contains the dashboard internals.
+//仪表盘服务
 type Dashboard struct {
 	config *Config
 

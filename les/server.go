@@ -36,6 +36,7 @@ import (
 	"github.com/ethereum/go-ethereum/rlp"
 )
 
+//这是轻量级客户端
 type LesServer struct {
 	config          *eth.Config
 	protocolManager *ProtocolManager
@@ -50,6 +51,7 @@ type LesServer struct {
 }
 
 func NewLesServer(eth *eth.Ethereum, config *eth.Config) (*LesServer, error) {
+	//创建一个轻量级客户端结构返回
 	quitSync := make(chan struct{})
 	pm, err := NewProtocolManager(eth.BlockChain().Config(), false, ServerProtocolVersions, config.NetworkId, eth.EventMux(), eth.Engine(), newPeerSet(), eth.BlockChain(), eth.TxPool(), eth.ChainDb(), nil, nil, quitSync, new(sync.WaitGroup))
 	if err != nil {
