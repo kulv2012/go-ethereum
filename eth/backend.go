@@ -337,6 +337,7 @@ func (self *Ethereum) SetEtherbase(etherbase common.Address) {
 }
 
 func (s *Ethereum) StartMining(local bool) error {
+	//开始挖矿，会创建协程去处理
 	eb, err := s.Etherbase()
 	if err != nil {
 		log.Error("Cannot start mining without etherbase", "err", err)

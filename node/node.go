@@ -49,8 +49,11 @@ type Node struct {
 	server       *p2p.Server // Currently running P2P networking layer
 
 	serviceFuncs []ServiceConstructor     // Service constructors (in dependency order)
+
+	//记录所有的服务,当前正在使用的，geth节点都是以服务的方式启动和挂载的，比如以太坊服务，状态服务等
 	services     map[reflect.Type]Service // Currently running services
 
+	//所有RPC接口
 	rpcAPIs       []rpc.API   // List of APIs currently provided by the node
 	inprocHandler *rpc.Server // In-process RPC request handler to process the API requests
 
@@ -137,6 +140,7 @@ func (n *Node) Register(constructor ServiceConstructor) error {
 
 // Start create a live P2P node and starts running it.
 func (n *Node) Start() error {
+	//启动节点
 	n.lock.Lock()
 	defer n.lock.Unlock()
 
@@ -163,19 +167,24 @@ func (n *Node) Start() error {
 	if n.serverConfig.NodeDatabase == "" {
 		n.serverConfig.NodeDatabase = n.config.NodeDB()
 	}
+	//新建一个P2P服务
 	running := &p2p.Server{Config: n.serverConfig}
 	n.log.Info("Starting peer-to-peer node", "instance", n.serverConfig.Name)
 
 	// Otherwise copy and specialize the P2P configuration
-	services := make(map[reflect.Type]Service)
+	services := make(map[reflect.Type]Service) //记录都有哪些服务
+	//遍历所有的serviceFuncs 服务，分别新建一个ServiceContext 结构
 	for _, constructor := range n.serviceFuncs {
 		// Create a new context for the particular service
+		// 为每一次service启动新建一个临时上下文结构传递进去
 		ctx := &ServiceContext{
 			config:         n.config,
-			services:       make(map[reflect.Type]Service),
+			//这个services 干什么的？似乎是记录一下之前的所有serviceFuncs 的kind，service，方便其他service使用
+			services:       make(map[reflect.Type]Service), 
 			EventMux:       n.eventmux,
 			AccountManager: n.accman,
 		}
+		//重新拷贝一下services 变量的所有成员给ctx.services， 所以，这里只能拷贝之前的serviceFuncs， 之后的没办法了
 		for kind, s := range services { // copy needed for threaded access
 			ctx.services[kind] = s
 		}
@@ -188,17 +197,22 @@ func (n *Node) Start() error {
 		if _, exists := services[kind]; exists {
 			return &DuplicateServiceError{Kind: kind}
 		}
+
+		//记录一下
 		services[kind] = service
 	}
+	fmt.Printf("aaaaa %+v\n", services) 
 	// Gather the protocols and start the freshly assembled P2P server
 	for _, service := range services {
 		running.Protocols = append(running.Protocols, service.Protocols()...)
 	}
+	//启动P2P服务
 	if err := running.Start(); err != nil {
 		return convertFileLockError(err)
 	}
 	// Start each of the services
 	started := []reflect.Type{}
+	//启动所有刚才创建的服务，分别调用， 如果出错就stop之前所有的服务并返回错误
 	for kind, service := range services {
 		// Start the next service, stopping all previous upon failure
 		if err := service.Start(running); err != nil {
@@ -212,6 +226,7 @@ func (n *Node) Start() error {
 		// Mark the service started for potential cleanup
 		started = append(started, kind)
 	}
+	//启动节点的所有RPC服务，开启监听端口，包括HTTPS， websocket接口
 	// Lastly start the configured RPC interfaces
 	if err := n.startRPC(services); err != nil {
 		for _, service := range services {
@@ -221,7 +236,7 @@ func (n *Node) Start() error {
 		return err
 	}
 	// Finish initializing the startup
-	n.services = services
+	n.services = services //记录所有的服务
 	n.server = running
 	n.stop = make(chan struct{})
 
@@ -251,6 +266,7 @@ func (n *Node) openDataDir() error {
 // startup. It's not meant to be called at any time afterwards as it makes certain
 // assumptions about the state of the node.
 func (n *Node) startRPC(services map[reflect.Type]Service) error {
+	//启动节点的所有RPC服务，开启监听端口，包括HTTPS， websocket接口
 	// Gather all the possible APIs to surface
 	apis := n.apis()
 	for _, service := range services {

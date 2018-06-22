@@ -221,7 +221,11 @@ func main() {
 // It creates a default node based on the command line arguments and runs it in
 // blocking mode, waiting for it to be shut down.
 func geth(ctx *cli.Context) error {
+	//默认情况下，如果不带子命令参数，那么app.Action = geth， 也就会调用geth()函数 来启动以太坊
+	//新建一个全节点服务，根据参数来
 	node := makeFullNode(ctx)
+
+	//启动节点
 	startNode(ctx, node)
 	node.Wait()
 	return nil
@@ -237,6 +241,7 @@ func startNode(ctx *cli.Context, stack *node.Node) {
 	// Unlock any account specifically requested
 	ks := stack.AccountManager().Backends(keystore.KeyStoreType)[0].(*keystore.KeyStore)
 
+	//自动解锁指定的账号，配置的, 这样非交互状态下方便使用
 	passwords := utils.MakePasswordList(ctx)
 	unlocks := strings.Split(ctx.GlobalString(utils.UnlockedAccountFlag.Name), ",")
 	for i, account := range unlocks {
@@ -249,6 +254,7 @@ func startNode(ctx *cli.Context, stack *node.Node) {
 	stack.AccountManager().Subscribe(events)
 
 	go func() {
+		//创建协程，用RPC监听钱包创建事件
 		// Create an chain state reader for self-derivation
 		rpcClient, err := stack.Attach()
 		if err != nil {
@@ -286,6 +292,7 @@ func startNode(ctx *cli.Context, stack *node.Node) {
 		}
 	}()
 	// Start auxiliary services if enabled
+	//如果指定了--mine 选项，就自动开始挖矿
 	if ctx.GlobalBool(utils.MiningEnabledFlag.Name) || ctx.GlobalBool(utils.DeveloperFlag.Name) {
 		// Mining only makes sense if a full Ethereum node is running
 		if ctx.GlobalBool(utils.LightModeFlag.Name) || ctx.GlobalString(utils.SyncModeFlag.Name) == "light" {
@@ -306,6 +313,7 @@ func startNode(ctx *cli.Context, stack *node.Node) {
 		}
 		// Set the gas price to the limits from the CLI and start mining
 		ethereum.TxPool().SetGasPrice(utils.GlobalBig(ctx, utils.GasPriceFlag.Name))
+		//开启挖矿，创建协程到后台处理
 		if err := ethereum.StartMining(true); err != nil {
 			utils.Fatalf("Failed to start mining: %v", err)
 		}
