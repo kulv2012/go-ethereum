@@ -148,6 +148,7 @@ func (n *Node) Start() error {
 	if n.server != nil {
 		return ErrNodeRunning
 	}
+	//加锁数据目录
 	if err := n.openDataDir(); err != nil {
 		return err
 	}
@@ -201,9 +202,8 @@ func (n *Node) Start() error {
 		//记录一下
 		services[kind] = service
 	}
-	fmt.Printf("aaaaa %+v\n", services) 
 	// Gather the protocols and start the freshly assembled P2P server
-	for _, service := range services {
+	for _, service := range services {//收集所有的这些服务的协议名称。
 		running.Protocols = append(running.Protocols, service.Protocols()...)
 	}
 	//启动P2P服务

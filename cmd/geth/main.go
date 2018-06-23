@@ -49,6 +49,7 @@ var (
 	// Ethereum address of the Geth release oracle.
 	relOracle = common.HexToAddress("0xfa7b9770ca4cb04296cac84f37736d4041251cdf")
 	// The app that holds all commands and flags.
+	//新建一个全局的app结构，用来管理程序启动，命令行配置等
 	app = utils.NewApp(gitCommit, "the go-ethereum command line interface")
 	// flags that configure the node
 	nodeFlags = []cli.Flag{
@@ -157,7 +158,7 @@ func init() {
 	//如果命令行参数里面有下面的指令，就会直接调用下面的Command.Run方法，而不调用默认的app.Action方法
 	app.Commands = []cli.Command{
 		// See chaincmd.go:
-		initCommand,
+		initCommand, //初始化创世块
 		importCommand,
 		exportCommand,
 		copydbCommand,
@@ -169,7 +170,7 @@ func init() {
 		accountCommand,
 		walletCommand,
 		// See consolecmd.go:
-		consoleCommand,
+		consoleCommand, //js命令行终端
 		attachCommand,
 		javascriptCommand,
 		// See misccmd.go:
@@ -211,6 +212,9 @@ func init() {
 }
 
 func main() {
+	//由于使用了gopkg.in/urfave/cli.v1 包，所以main函数非常简单，直接调用app.Run即可。实际上对于geth来说，app接下来实际上调用的函数有2种情况： 
+	//1. 如果是geth命令行启动，不带子命令，那么直接调用app.Action = geth（）函数；
+	//2. 如果带有子命令比如build/bin/geth console  启动，那么会调用对应命令的Command.Action， 对于console来说就是调用的 localConsole()函数；
 	if err := app.Run(os.Args); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
@@ -246,6 +250,7 @@ func startNode(ctx *cli.Context, stack *node.Node) {
 	unlocks := strings.Split(ctx.GlobalString(utils.UnlockedAccountFlag.Name), ",")
 	for i, account := range unlocks {
 		if trimmed := strings.TrimSpace(account); trimmed != "" {
+			//根据密码解锁账号
 			unlockAccount(ctx, ks, trimmed, i, passwords)
 		}
 	}
@@ -298,6 +303,7 @@ func startNode(ctx *cli.Context, stack *node.Node) {
 		if ctx.GlobalBool(utils.LightModeFlag.Name) || ctx.GlobalString(utils.SyncModeFlag.Name) == "light" {
 			utils.Fatalf("Light clients do not support mining")
 		}
+		//从node中获取当前注册的以太坊节点，根据类型Ethereum来查询，得到节点后StartMining
 		var ethereum *eth.Ethereum
 		if err := stack.Service(&ethereum); err != nil {
 			utils.Fatalf("Ethereum service not running: %v", err)

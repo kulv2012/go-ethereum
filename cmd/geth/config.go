@@ -108,6 +108,7 @@ func defaultNodeConfig() node.Config {
 }
 
 func makeConfigNode(ctx *cli.Context) (*node.Node, gethConfig) {
+	//加载默认配置，以及文件配置，设置到ctx上面。 并且创建一个节点Node结构，这个很重要
 	// Load defaults.
 	cfg := gethConfig{
 		Eth:       eth.DefaultConfig,
@@ -153,7 +154,7 @@ func enableWhisper(ctx *cli.Context) bool {
 func makeFullNode(ctx *cli.Context) *node.Node {
 	//生成node.Node一个结构，里面会有任务函数栈, 这里设置各个服务到serviceFuncs 里面，
 	//包括：轻节点，全节点， dashboard， shh， 以及状态stats服务
-	stack, cfg := makeConfigNode(ctx)
+	stack, cfg := makeConfigNode(ctx) //加载所有的配置信息到ctx上面
 
 	//在stack上增加一个以太坊节点，其实就是new一个Ethereum 后加到后者的AddLesServer serviceFuncs 里面去
 	//然后在stack.Run的时候会盗用这些service 

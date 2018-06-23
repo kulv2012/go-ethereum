@@ -34,7 +34,7 @@ type Command struct {
 	// It is run even if Action() panics
 	After AfterFunc
 	// The function to call when this command is invoked
-	Action interface{}
+	Action interface{} //这个函数最后会被调用，也就是对应的处理函数了
 	// TODO: replace `Action: interface{}` with `Action: ActionFunc` once some kind
 	// of deprecation period has passed, maybe?
 
