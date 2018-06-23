@@ -30,7 +30,11 @@ import (
 // the protocol stack, that is passed to all constructors to be optionally used;
 // as well as utility methods to operate on the service environment.
 type ServiceContext struct {
+	//给服务传递的上下文信息，配置，之前的服务列表，事件通信结构，以及账号管理器
 	config         *Config
+
+	////这个services 干什么的？似乎是记录一下之前的所有serviceFuncs 的kind，service，方便其他service使用
+	//不过只有之前创建的，比如ABC三个service，每个service只知道之前的service
 	services       map[reflect.Type]Service // Index of the already constructed services
 	EventMux       *event.TypeMux           // Event multiplexer used for decoupled notifications
 	AccountManager *accounts.Manager        // Account manager created by the node.

@@ -126,6 +126,8 @@ func makeConfigNode(ctx *cli.Context) (*node.Node, gethConfig) {
 
 	// Apply flags.
 	utils.SetNodeConfig(ctx, &cfg.Node)
+
+	//最重要的，创建一个Node结构，这是整个节点的中心
 	stack, err := node.New(&cfg.Node)
 	if err != nil {
 		utils.Fatalf("Failed to create the protocol stack: %v", err)
@@ -154,7 +156,7 @@ func enableWhisper(ctx *cli.Context) bool {
 func makeFullNode(ctx *cli.Context) *node.Node {
 	//生成node.Node一个结构，里面会有任务函数栈, 这里设置各个服务到serviceFuncs 里面，
 	//包括：轻节点，全节点， dashboard， shh， 以及状态stats服务
-	stack, cfg := makeConfigNode(ctx) //加载所有的配置信息到ctx上面
+	stack, cfg := makeConfigNode(ctx) //加载所有的配置信息到ctx上面 , 生成一个Node结构，叫stack多不好玩
 
 	//在stack上增加一个以太坊节点，其实就是new一个Ethereum 后加到后者的AddLesServer serviceFuncs 里面去
 	//然后在stack.Run的时候会盗用这些service 

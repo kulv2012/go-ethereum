@@ -38,16 +38,20 @@ import (
 
 // Node is a container on which services can be registered.
 type Node struct {
+	//这个是给每一个service之间使用的事件通信工具，类似订阅发布这样，不过废弃了，以后推荐使用Feed
 	eventmux *event.TypeMux // Event multiplexer used between the services of a stack
 	config   *Config
-	accman   *accounts.Manager
+	accman   *accounts.Manager //账号管理器
 
 	ephemeralKeystore string         // if non-empty, the key directory that will be removed by Stop
 	instanceDirLock   flock.Releaser // prevents concurrent use of instance directory
 
+	//P2P服务
 	serverConfig p2p.Config
 	server       *p2p.Server // Currently running P2P networking layer
 
+	//服务创建器，会在utils.StartNode(stack)里面分别被调用创建service，比如RegisterEthService里面会创建eth服务
+	//创建器会创建LightEthereum,Ethereum 这些服务
 	serviceFuncs []ServiceConstructor     // Service constructors (in dependency order)
 
 	//记录所有的服务,当前正在使用的，geth节点都是以服务的方式启动和挂载的，比如以太坊服务，状态服务等
@@ -57,6 +61,7 @@ type Node struct {
 	rpcAPIs       []rpc.API   // List of APIs currently provided by the node
 	inprocHandler *rpc.Server // In-process RPC request handler to process the API requests
 
+	//下面是各个接口的监听服务
 	ipcEndpoint string       // IPC endpoint to listen at (empty = IPC disabled)
 	ipcListener net.Listener // IPC RPC listener socket to serve API requests
 	ipcHandler  *rpc.Server  // IPC RPC request handler to process the API requests
@@ -70,6 +75,7 @@ type Node struct {
 	wsListener net.Listener // Websocket RPC listener socket to server API requests
 	wsHandler  *rpc.Server  // Websocket RPC request handler to process the API requests
 
+	//停止管道
 	stop chan struct{} // Channel to wait for termination notifications
 	lock sync.RWMutex
 
@@ -78,10 +84,11 @@ type Node struct {
 
 // New creates a new P2P node, ready for protocol registration.
 func New(conf *Config) (*Node, error) {
+	//创建一个Node 结构返回，一个节点就一个node
 	// Copy config and resolve the datadir so future changes to the current
 	// working directory don't affect the node.
-	confCopy := *conf
-	conf = &confCopy
+	confCopy := *conf //初始化一个新的
+	conf = &confCopy //将conf变量重新指向confCopy， 这样就不会引用参数传进来的配置conf了
 	if conf.DataDir != "" {
 		absdatadir, err := filepath.Abs(conf.DataDir)
 		if err != nil {

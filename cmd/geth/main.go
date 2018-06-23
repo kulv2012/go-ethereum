@@ -240,6 +240,7 @@ func geth(ctx *cli.Context) error {
 // miner.
 func startNode(ctx *cli.Context, stack *node.Node) {
 	// Start up the node itself
+	//启动对应的各项节点的服务，以及P2P服务
 	utils.StartNode(stack)
 
 	// Unlock any account specifically requested

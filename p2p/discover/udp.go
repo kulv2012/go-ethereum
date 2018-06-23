@@ -260,6 +260,7 @@ func newUDP(c conn, cfg Config) (*Table, *udp, error) {
 	}
 	udp.Table = tab
 
+	fmt.Println("asdfasf\n" )
 	go udp.loop()
 	go udp.readLoop(cfg.Unhandled)
 	return udp.Table, udp, nil
@@ -517,7 +518,8 @@ func (t *udp) readLoop(unhandled chan<- ReadPacket) {
 	// Packets larger than this size will be cut at the end and treated
 	// as invalid because their hash won't match.
 	buf := make([]byte, 1280)
-	for {
+	for {//下面是不是死循环了？退出的时候怎么处理的？有没有监听closeing
+		//测试了一下，死循环了。。。退出不了的，因为没有监听退出事件
 		nbytes, from, err := t.conn.ReadFromUDP(buf)
 		if netutil.IsTemporaryError(err) {
 			// Ignore temporary read errors.

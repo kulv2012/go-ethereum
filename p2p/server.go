@@ -126,6 +126,7 @@ type Config struct {
 	// If set to a non-nil value, the given NAT port mapper
 	// is used to make the listening port available to the
 	// Internet.
+	//一个NAT网络实现，内网映射到外网服务
 	NAT nat.Interface `toml:",omitempty"`
 
 	// If Dialer is set to a non-nil value, the given Dialer
@@ -382,7 +383,8 @@ func (s *sharedUDPConn) Close() error {
 // Start starts running the server.
 // Servers can not be re-used after stopping.
 func (srv *Server) Start() (err error) {
-	srv.lock.Lock()
+	//startNode-> stack.Start() 里面会调用这里启动p2p服务
+	srv.lock.Lock() //加锁
 	defer srv.lock.Unlock()
 	if srv.running {
 		return errors.New("server already running")
@@ -398,14 +400,14 @@ func (srv *Server) Start() (err error) {
 	if srv.PrivateKey == nil {
 		return fmt.Errorf("Server.PrivateKey must be set to a non-nil key")
 	}
-	if srv.newTransport == nil {
+	if srv.newTransport == nil {// 钩子
 		srv.newTransport = newRLPX
 	}
 	if srv.Dialer == nil {
 		srv.Dialer = TCPDialer{&net.Dialer{Timeout: defaultDialTimeout}}
 	}
 	srv.quit = make(chan struct{})
-	srv.addpeer = make(chan *conn)
+	srv.addpeer = make(chan *conn) //增加peer
 	srv.delpeer = make(chan peerDrop)
 	srv.posthandshake = make(chan *conn)
 	srv.addstatic = make(chan *discover.Node)
@@ -421,6 +423,7 @@ func (srv *Server) Start() (err error) {
 	)
 
 	if !srv.NoDiscovery || srv.DiscoveryV5 {
+		//网络发现服务, 用UDP协议 ， 这里的目的是生成一个udp协议地址字段
 		addr, err := net.ResolveUDPAddr("udp", srv.ListenAddr)
 		if err != nil {
 			return err
@@ -431,6 +434,7 @@ func (srv *Server) Start() (err error) {
 		}
 		realaddr = conn.LocalAddr().(*net.UDPAddr)
 		if srv.NAT != nil {
+			//如果配置了NAT，那么需要做网络映射，映射到新的外网地址
 			if !realaddr.IP.IsLoopback() {
 				go nat.Map(srv.NAT, srv.quit, "udp", realaddr.Port, realaddr.Port, "ethereum discovery")
 			}
@@ -442,6 +446,7 @@ func (srv *Server) Start() (err error) {
 	}
 
 	if !srv.NoDiscovery && srv.DiscoveryV5 {
+		//新版服务发现协议 使用新的方式
 		unhandled = make(chan discover.ReadPacket, 100)
 		sconn = &sharedUDPConn{conn, unhandled}
 	}
@@ -456,6 +461,7 @@ func (srv *Server) Start() (err error) {
 			Bootnodes:    srv.BootstrapNodes,
 			Unhandled:    unhandled,
 		}
+		//开启后台协程进行UDP监听
 		ntab, err := discover.ListenUDP(conn, cfg)
 		if err != nil {
 			return err
