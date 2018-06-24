@@ -157,6 +157,7 @@ type Server struct {
 	lock    sync.Mutex // protects running
 	running bool
 
+	//服务发现结构，实际上是newUDP(c, cfg)
 	ntab         discoverTable
 	listener     net.Listener
 	ourHandshake *protoHandshake
@@ -287,6 +288,7 @@ func (srv *Server) PeerCount() int {
 // server is shut down. If the connection fails for any reason, the server will
 // attempt to reconnect the peer.
 func (srv *Server) AddPeer(node *discover.Node) {
+	//增加一个peer
 	select {
 	case srv.addstatic <- node:
 	case <-srv.quit:
@@ -317,6 +319,7 @@ func (srv *Server) Self() *discover.Node {
 	return srv.makeSelf(srv.listener, srv.ntab)
 }
 
+//O
 func (srv *Server) makeSelf(listener net.Listener, ntab discoverTable) *discover.Node {
 	// If the server's not running, return an empty node.
 	// If the node is running but discovery is off, manually assemble the node infos.
@@ -461,7 +464,7 @@ func (srv *Server) Start() (err error) {
 			Bootnodes:    srv.BootstrapNodes,
 			Unhandled:    unhandled,
 		}
-		//开启后台协程进行UDP监听
+		//开启后台协程进行UDP监听, 如果有新的数据包到来，会通知到 unhandled（如果用的是DiscoveryV5） 上面
 		ntab, err := discover.ListenUDP(conn, cfg)
 		if err != nil {
 			return err
@@ -489,6 +492,7 @@ func (srv *Server) Start() (err error) {
 	}
 
 	dynPeers := srv.maxDialedConns()
+	//新建一个dialstate结构返回 , StaticNodes 会直接加到srv.static[]数组里面
 	dialer := newDialState(srv.StaticNodes, srv.BootstrapNodes, srv.ntab, dynPeers, srv.NetRestrict)
 
 	// handshake
@@ -498,6 +502,7 @@ func (srv *Server) Start() (err error) {
 	}
 	// listen/dial
 	if srv.ListenAddr != "" {
+		//开始监听TCP请求
 		if err := srv.startListening(); err != nil {
 			return err
 		}
@@ -507,6 +512,7 @@ func (srv *Server) Start() (err error) {
 	}
 
 	srv.loopWG.Add(1)
+	//在协程里面运行, 开始监听各个信号量，处理peer的增删改
 	go srv.run(dialer)
 	srv.running = true
 	return nil
@@ -522,7 +528,10 @@ func (srv *Server) startListening() error {
 	srv.ListenAddr = laddr.String()
 	srv.listener = listener
 	srv.loopWG.Add(1)
+	//进入监听携程监听请求
 	go srv.listenLoop()
+
+	//处理NAT网络
 	// Map the TCP listening port if NAT is configured.
 	if !laddr.IP.IsLoopback() && srv.NAT != nil {
 		srv.loopWG.Add(1)
@@ -542,6 +551,7 @@ type dialer interface {
 }
 
 func (srv *Server) run(dialstate dialer) {
+	//在协程里面运行, 开始监听各个信号量，处理peer的增删改
 	defer srv.loopWG.Done()
 	var (
 		peers        = make(map[discover.NodeID]*Peer)
@@ -554,6 +564,7 @@ func (srv *Server) run(dialstate dialer) {
 	// Put trusted nodes into a map to speed up checks.
 	// Trusted peers are loaded on startup and cannot be
 	// modified while the server is running.
+	//可信节点，配置的 由trusted-nodes.json设置
 	for _, n := range srv.TrustedNodes {
 		trusted[n.ID] = true
 	}
@@ -592,6 +603,7 @@ running:
 	for {
 		scheduleTasks()
 
+		//下面开始监听各个管道的事件，来处理peer的增删改操作
 		select {
 		case <-srv.quit:
 			// The server was stopped. Run the cleanup logic.
@@ -674,6 +686,7 @@ running:
 		}
 	}
 
+	//退出，开始关闭各连接个
 	srv.log.Trace("P2P networking is spinning down")
 
 	// Terminate discovery. If there is a running lookup it will terminate soon.
@@ -744,6 +757,7 @@ type tempError interface {
 // listenLoop runs in its own goroutine and accepts
 // inbound connections.
 func (srv *Server) listenLoop() {
+	//startListening 调用设置的
 	defer srv.loopWG.Done()
 	srv.log.Info("RLPx listener up", "self", srv.makeSelf(srv.listener, srv.ntab))
 
@@ -765,6 +779,7 @@ func (srv *Server) listenLoop() {
 			err error
 		)
 		for {
+			//接受链接
 			fd, err = srv.listener.Accept()
 			if tempErr, ok := err.(tempError); ok && tempErr.Temporary() {
 				srv.log.Debug("Temporary read error", "err", err)
@@ -788,6 +803,7 @@ func (srv *Server) listenLoop() {
 
 		fd = newMeteredConn(fd, true)
 		srv.log.Trace("Accepted connection", "addr", fd.RemoteAddr())
+		//创建协程去处理这个链接
 		go func() {
 			srv.SetupConn(fd, inboundConn, nil)
 			slots <- struct{}{}

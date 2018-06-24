@@ -128,6 +128,7 @@ type waitExpireTask struct {
 }
 
 func newDialState(static []*discover.Node, bootnodes []*discover.Node, ntab discoverTable, maxdyn int, netrestrict *netutil.Netlist) *dialstate {
+	//新建一个dialstate结构返回，对于static节点，依次调用addStatic 加到s.static[n.ID] 里面
 	s := &dialstate{
 		maxDynDials: maxdyn,
 		ntab:        ntab,

@@ -260,8 +260,9 @@ func newUDP(c conn, cfg Config) (*Table, *udp, error) {
 	}
 	udp.Table = tab
 
-	fmt.Println("asdfasf\n" )
+	//发送数据
 	go udp.loop()
+	//读取数据，并调用 handlePacket进行处理
 	go udp.readLoop(cfg.Unhandled)
 	return udp.Table, udp, nil
 }
@@ -530,6 +531,7 @@ func (t *udp) readLoop(unhandled chan<- ReadPacket) {
 			log.Debug("UDP read error", "err", err)
 			return
 		}
+		//调用处理函数处理这个package
 		if t.handlePacket(from, buf[:nbytes]) != nil && unhandled != nil {
 			select {
 			case unhandled <- ReadPacket{buf[:nbytes], from}:
@@ -545,6 +547,7 @@ func (t *udp) handlePacket(from *net.UDPAddr, buf []byte) error {
 		log.Debug("Bad discv4 packet", "addr", from, "err", err)
 		return err
 	}
+	//调用对应的packet类型的handle函数， 比如： neighbors.handle , findnode.handle
 	err = packet.handle(t, from, fromID, hash)
 	log.Trace("<< "+packet.name(), "addr", from, "err", err)
 	return err
