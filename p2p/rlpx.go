@@ -77,6 +77,8 @@ var errPlainMessageTooLarge = errors.New("message length >= 16MB")
 // rlpx is the transport protocol used by actual (non-test) connections.
 // It wraps the frame encoder with locks and read/write deadlines.
 type rlpx struct {
+	//这是以太坊的基于TCP，udp之上的加密握手协议
+	//rw负责读写，mutex负责加锁
 	fd net.Conn
 
 	rmu, wmu sync.Mutex
@@ -84,6 +86,7 @@ type rlpx struct {
 }
 
 func newRLPX(fd net.Conn) transport {
+	//这是以太坊的基于TCP，udp之上的加密握手协议
 	fd.SetDeadline(time.Now().Add(handshakeTimeout))
 	return &rlpx{fd: fd}
 }

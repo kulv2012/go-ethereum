@@ -78,6 +78,7 @@ type Config struct {
 
 	// DiscoveryV5 specifies whether the the new topic-discovery based V5 discovery
 	// protocol should be started or not.
+	//参数 --v5disc 控制是否使用V5版发现机制 
 	DiscoveryV5 bool `toml:",omitempty"`
 
 	// Name sets the node name of this server.
@@ -151,6 +152,7 @@ type Server struct {
 
 	// Hooks for testing. These are useful because we can inhibit
 	// the whole protocol stack.
+	//下面等于newRLPX, 采用Rlpx加密协议进行加密，用在TCP端口上
 	newTransport func(net.Conn) transport
 	newPeerHook  func(*Peer)
 
@@ -404,11 +406,14 @@ func (srv *Server) Start() (err error) {
 		return fmt.Errorf("Server.PrivateKey must be set to a non-nil key")
 	}
 	if srv.newTransport == nil {// 钩子
+		//这是以太坊的基于TCP，udp之上的加密握手协议RLPx
 		srv.newTransport = newRLPX
 	}
 	if srv.Dialer == nil {
 		srv.Dialer = TCPDialer{&net.Dialer{Timeout: defaultDialTimeout}}
 	}
+
+	//下面是一堆用于管理peer的管道, 接下来会监听他们
 	srv.quit = make(chan struct{})
 	srv.addpeer = make(chan *conn) //增加peer
 	srv.delpeer = make(chan peerDrop)
@@ -426,7 +431,7 @@ func (srv *Server) Start() (err error) {
 	)
 
 	if !srv.NoDiscovery || srv.DiscoveryV5 {
-		//网络发现服务, 用UDP协议 ， 这里的目的是生成一个udp协议地址字段
+		//网络发现服务, 用UDP协议 ， 这里的目的是生成一个udp协议地址字段, 设置一个UDP listen监听句柄
 		addr, err := net.ResolveUDPAddr("udp", srv.ListenAddr)
 		if err != nil {
 			return err
@@ -461,7 +466,7 @@ func (srv *Server) Start() (err error) {
 			AnnounceAddr: realaddr,
 			NodeDBPath:   srv.NodeDatabase,
 			NetRestrict:  srv.NetRestrict,
-			Bootnodes:    srv.BootstrapNodes,
+			Bootnodes:    srv.BootstrapNodes, //初始启动peer节点
 			Unhandled:    unhandled,
 		}
 		//开启后台协程进行UDP监听, 如果有新的数据包到来，会通知到 unhandled（如果用的是DiscoveryV5） 上面
@@ -473,6 +478,7 @@ func (srv *Server) Start() (err error) {
 	}
 
 	if srv.DiscoveryV5 {
+		//--v5disc 参数控制，默认关闭
 		var (
 			ntab *discv5.Network
 			err  error
@@ -485,6 +491,7 @@ func (srv *Server) Start() (err error) {
 		if err != nil {
 			return err
 		}
+		//设置启动节点，至少需要一个节点才能连接上整个P2P网络
 		if err := ntab.SetFallbackNodes(srv.BootstrapNodesV5); err != nil {
 			return err
 		}
@@ -493,6 +500,7 @@ func (srv *Server) Start() (err error) {
 
 	dynPeers := srv.maxDialedConns()
 	//新建一个dialstate结构返回 , StaticNodes 会直接加到srv.static[]数组里面
+	//dialer是用来接听到上面的一堆管道事件后，管理nodes列表的
 	dialer := newDialState(srv.StaticNodes, srv.BootstrapNodes, srv.ntab, dynPeers, srv.NetRestrict)
 
 	// handshake

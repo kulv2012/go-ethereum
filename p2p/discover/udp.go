@@ -162,7 +162,7 @@ type udp struct {
 	conn        conn
 	netrestrict *netutil.Netlist
 	priv        *ecdsa.PrivateKey
-	ourEndpoint rpcEndpoint
+	ourEndpoint rpcEndpoint //UDP 对应的TCP地址，端口一样
 
 	addpending chan *pending
 	gotreply   chan reply
@@ -225,12 +225,15 @@ type Config struct {
 	AnnounceAddr *net.UDPAddr      // local address announced in the DHT
 	NodeDBPath   string            // if set, the node database is stored at this filesystem location
 	NetRestrict  *netutil.Netlist  // network whitelist
+	//初始启动连接的节点
 	Bootnodes    []*Node           // list of bootstrap nodes
 	Unhandled    chan<- ReadPacket // unhandled packets are sent on this channel
 }
 
 // ListenUDP returns a new table that listens for UDP packets on laddr.
 func ListenUDP(c conn, cfg Config) (*Table, error) {
+	//开启后台协程进行UDP监听, 如果有新的数据包到来，会通知到 unhandled（如果用的是DiscoveryV5） 上面
+	//给P2P服务使用
 	tab, _, err := newUDP(c, cfg)
 	if err != nil {
 		return nil, err
@@ -253,6 +256,7 @@ func newUDP(c conn, cfg Config) (*Table, *udp, error) {
 		realaddr = cfg.AnnounceAddr
 	}
 	// TODO: separate TCP port
+	//拆分出一个ip端口的rpcEndpoint，其实就是UDP -》 转成对应的TCP地址
 	udp.ourEndpoint = makeEndpoint(realaddr, uint16(realaddr.Port))
 	tab, err := newTable(udp, PubkeyID(&cfg.PrivateKey.PublicKey), realaddr, cfg.NodeDBPath, cfg.Bootnodes)
 	if err != nil {

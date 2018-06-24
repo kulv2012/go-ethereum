@@ -67,7 +67,10 @@ const (
 
 type Table struct {
 	mutex   sync.Mutex        // protects buckets, bucket content, nursery, rand
+
+	//所有节点都加到这个里面，按照距离
 	buckets [nBuckets]*bucket // index of known nodes by distance
+	//是bootstrap 启动节点
 	nursery []*Node           // bootstrap nodes
 	rand    *mrand.Rand       // source of randomness, periodically reseeded
 	ips     netutil.DistinctNetSet
@@ -107,7 +110,10 @@ type transport interface {
 // bucket contains nodes, ordered by their last activity. the entry
 // that was most recently active is the first element in entries.
 type bucket struct {
+	//这个bucket里面的所有节点，新加入的放到前面
 	entries      []*Node // live entries, sorted by time of last contact
+
+	//待使用节点
 	replacements []*Node // recently seen nodes to be used if revalidation fails
 	ips          netutil.DistinctNetSet
 }
@@ -142,7 +148,8 @@ func newTable(t transport, ourID NodeID, ourAddr *net.UDPAddr, nodeDBPath string
 			ips: netutil.DistinctNetSet{Subnet: bucketSubnet, Limit: bucketIPLimit},
 		}
 	}
-	tab.seedRand()
+	tab.seedRand() //设置随机种子
+	//加载所有的种子节点，其中包括参数bootnodes 里面的节点
 	tab.loadSeedNodes(false)
 	// Start the background expiration goroutine after loading seeds so that the search for
 	// seed nodes also considers older nodes that would otherwise be removed by the
@@ -153,6 +160,7 @@ func newTable(t transport, ourID NodeID, ourAddr *net.UDPAddr, nodeDBPath string
 }
 
 func (tab *Table) seedRand() {
+	//设置随机种子
 	var b [8]byte
 	crand.Read(b[:])
 
@@ -222,12 +230,14 @@ func (tab *Table) Close() {
 // are used to connect to the network if the table is empty and there
 // are no known nodes in the database.
 func (tab *Table) setFallbackNodes(nodes []*Node) error {
+	//设置初始链接节点，其实就是Bootnodes
 	for _, n := range nodes {
 		if err := n.validateComplete(); err != nil {
 			return fmt.Errorf("bad bootstrap/fallback node %q (%v)", n, err)
 		}
 	}
 	tab.nursery = make([]*Node, 0, len(nodes))
+	//遍历所有nursery节点，然后添加到tab.nursery 里面
 	for _, n := range nodes {
 		cpy := *n
 		// Recompute cpy.sha because the node might not have been
@@ -448,6 +458,7 @@ func (tab *Table) doRefresh(done chan struct{}) {
 }
 
 func (tab *Table) loadSeedNodes(bond bool) {
+	//加载所有种子节点，包括tab.nursery  上设置的 Bootnodes初始启动节点
 	seeds := tab.db.querySeeds(seedCount, seedMaxAge)
 	seeds = append(seeds, tab.nursery...)
 	if bond {
@@ -457,6 +468,7 @@ func (tab *Table) loadSeedNodes(bond bool) {
 		seed := seeds[i]
 		age := log.Lazy{Fn: func() interface{} { return time.Since(tab.db.bondTime(seed.ID)) }}
 		log.Debug("Found seed node in database", "id", seed.ID, "addr", seed.addr(), "age", age)
+		//一个个将其加入到tab.buckets列表，之前未连接的节点会放到Replacement里面
 		tab.add(seed)
 	}
 }
@@ -686,7 +698,9 @@ func (tab *Table) add(new *Node) {
 	tab.mutex.Lock()
 	defer tab.mutex.Unlock()
 
+	//得到这个节点的sha对一个的hash bucket曹
 	b := tab.bucket(new.sha)
+	//将其加入到table.buckets对应的bucket里面
 	if !tab.bumpOrAdd(b, new) {
 		// Node is not in table. Add it to the replacement list.
 		tab.addReplacement(b, new)
@@ -782,6 +796,7 @@ func (tab *Table) replace(b *bucket, last *Node) *Node {
 // bump moves the given node to the front of the bucket entry list
 // if it is contained in that list.
 func (b *bucket) bump(n *Node) bool {
+	//查找这个bucket列表是否已经存在这个节点，如果存在就更新
 	for i := range b.entries {
 		if b.entries[i].ID == n.ID {
 			// move it to the front
@@ -796,18 +811,22 @@ func (b *bucket) bump(n *Node) bool {
 // bumpOrAdd moves n to the front of the bucket entry list or adds it if the list isn't
 // full. The return value is true if n is in the bucket.
 func (tab *Table) bumpOrAdd(b *bucket, n *Node) bool {
+	//将一个节点加入到当前bucket里面
+	//查找这个bucket列表是否已经存在这个节点，如果存在就更新
 	if b.bump(n) {
 		return true
 	}
 	if len(b.entries) >= bucketSize || !tab.addIP(b, n.IP) {
 		return false
 	}
+	//这个节点之前没有出现过， 加入到第一个
 	b.entries, _ = pushNode(b.entries, n, bucketSize)
 	b.replacements = deleteNode(b.replacements, n)
 	n.addedAt = time.Now()
-	if tab.nodeAddedHook != nil {
+	if tab.nodeAddedHook != nil { //自动化测试用
 		tab.nodeAddedHook(n)
 	}
+	//因为之前不再里面，所以返回true，后面会加入到replacements列表
 	return true
 }
 
