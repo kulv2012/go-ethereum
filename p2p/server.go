@@ -146,6 +146,8 @@ type Config struct {
 }
 
 // Server manages all peer connections.
+//这是一个P2P的核心结构，里面包括一个udp服务发现结构ntab以及tcp监听功能， 就是listener
+//UDP用来发现服务，TCP用来建立数据传输连接
 type Server struct {
 	// Config fields may not be modified while the server is running.
 	Config
@@ -161,7 +163,7 @@ type Server struct {
 
 	//服务发现结构，实际上是newUDP(c, cfg)
 	ntab         discoverTable
-	listener     net.Listener
+	listener     net.Listener //TCP 监听结构
 	ourHandshake *protoHandshake
 	lastLookup   time.Time
 	DiscV5       *discv5.Network
@@ -170,6 +172,7 @@ type Server struct {
 	peerOp     chan peerOpFunc
 	peerOpDone chan struct{}
 
+	//下面是一堆用来通信的管道
 	quit          chan struct{}
 	addstatic     chan *discover.Node
 	removestatic  chan *discover.Node
@@ -259,6 +262,7 @@ func (c *conn) is(f connFlag) bool {
 
 // Peers returns all connected peers.
 func (srv *Server) Peers() []*Peer {
+	//通过管道，在主协程总执行匿名函数获取当前所有的peers 
 	var ps []*Peer
 	select {
 	// Note: We'd love to put this function into a variable but
@@ -312,6 +316,7 @@ func (srv *Server) SubscribeEvents(ch chan *PeerEvent) event.Subscription {
 
 // Self returns the local node's endpoint information.
 func (srv *Server) Self() *discover.Node {
+	//返回我自己的信息
 	srv.lock.Lock()
 	defer srv.lock.Unlock()
 
@@ -406,7 +411,7 @@ func (srv *Server) Start() (err error) {
 		return fmt.Errorf("Server.PrivateKey must be set to a non-nil key")
 	}
 	if srv.newTransport == nil {// 钩子
-		//这是以太坊的基于TCP，udp之上的加密握手协议RLPx
+		//这是以太坊的基于TCP之上的加密握手协议RLPx , UDP不需要
 		srv.newTransport = newRLPX
 	}
 	if srv.Dialer == nil {
@@ -436,6 +441,7 @@ func (srv *Server) Start() (err error) {
 		if err != nil {
 			return err
 		}
+		//下面这个会将这个udp连接设置为listen状态
 		conn, err = net.ListenUDP("udp", addr)
 		if err != nil {
 			return err
@@ -470,6 +476,10 @@ func (srv *Server) Start() (err error) {
 			Unhandled:    unhandled,
 		}
 		//开启后台协程进行UDP监听, 如果有新的数据包到来，会通知到 unhandled（如果用的是DiscoveryV5） 上面
+		//discover包会使用conn这个UDP 监听链接，不断读取数据包进行处理
+		//同事，discover会自己维护cfg上面设置的Bootnodes 初始连接节点，
+		//进而进行p2p扩展，不断发送findnode包询问最近的临接节点，并加入到自己的Table.buckets列表中
+		//ntab 是衣蛾discover.udp结构，同时也匿名继承了discover.Table类
 		ntab, err := discover.ListenUDP(conn, cfg)
 		if err != nil {
 			return err
@@ -500,7 +510,7 @@ func (srv *Server) Start() (err error) {
 
 	dynPeers := srv.maxDialedConns()
 	//新建一个dialstate结构返回 , StaticNodes 会直接加到srv.static[]数组里面
-	//dialer是用来接听到上面的一堆管道事件后，管理nodes列表的
+	//dialer是用来接听到上面的一堆管道事件后，管理nodes列表的, 发送TCP连接的
 	dialer := newDialState(srv.StaticNodes, srv.BootstrapNodes, srv.ntab, dynPeers, srv.NetRestrict)
 
 	// handshake
@@ -510,7 +520,7 @@ func (srv *Server) Start() (err error) {
 	}
 	// listen/dial
 	if srv.ListenAddr != "" {
-		//开始监听TCP请求
+		//开始监听TCP请求, TCP端口是需要加密的，传输的信息比较敏感，所以有握手过程
 		if err := srv.startListening(); err != nil {
 			return err
 		}
@@ -520,7 +530,8 @@ func (srv *Server) Start() (err error) {
 	}
 
 	srv.loopWG.Add(1)
-	//在协程里面运行, 开始监听各个信号量，处理peer的增删改
+	//在协程里面运行, 开始监听各个信号量，处理peer的增删改.
+	//并且一开始会scheduleTasks尝试连接其他节点
 	go srv.run(dialer)
 	srv.running = true
 	return nil
@@ -528,6 +539,7 @@ func (srv *Server) Start() (err error) {
 
 func (srv *Server) startListening() error {
 	// Launch the TCP listener.
+	//先创建一个TCP监听句柄, 然后创建listenLoop协程进行不断的监听请求，进行Accept，然后握手，建立安全连接
 	listener, err := net.Listen("tcp", srv.ListenAddr)
 	if err != nil {
 		return err
@@ -536,7 +548,7 @@ func (srv *Server) startListening() error {
 	srv.ListenAddr = laddr.String()
 	srv.listener = listener
 	srv.loopWG.Add(1)
-	//进入监听携程监听请求
+	//进入监听协程监听请求
 	go srv.listenLoop()
 
 	//处理NAT网络
@@ -566,6 +578,7 @@ func (srv *Server) run(dialstate dialer) {
 		inboundCount = 0
 		trusted      = make(map[discover.NodeID]bool, len(srv.TrustedNodes))
 		taskdone     = make(chan task, maxActiveDialTasks)
+		//当前正在使用的链接
 		runningTasks []task
 		queuedTasks  []task // tasks that can't run yet
 	)
@@ -587,20 +600,27 @@ func (srv *Server) run(dialstate dialer) {
 		}
 	}
 	// starts until max number of active tasks is satisfied
+	//用来跟参数数组代表的节点一个个创建协程简历连接
 	startTasks := func(ts []task) (rest []task) {
 		i := 0
+		//最多可以建立maxActiveDialTasks 个链接
 		for ; len(runningTasks) < maxActiveDialTasks && i < len(ts); i++ {
 			t := ts[i]
 			srv.log.Trace("New dial task", "task", t)
 			go func() { t.Do(srv); taskdone <- t }()
+			//当前正在使用的链接
 			runningTasks = append(runningTasks, t)
 		}
 		return ts[i:]
 	}
+	//用来扫描服务发现的P2P节点，建立TCP连接, 这也是最重要的步骤了
 	scheduleTasks := func() {
 		// Start from queue first.
+		// 先尝试用startTasks 调用 queuedTasks 列表，试图一个个建立链接，不过可能由于maxActiveDialTasks 的限制,默认16个
+		//所以下面这行代码可以不断运行，直到为空
 		queuedTasks = append(queuedTasks[:0], startTasks(queuedTasks)...)
 		// Query dialer for new tasks and start as many as possible now.
+		//如果已经建立的链接还不到16个，那么尝试从p2p discover  中找出更多节点来用
 		if len(runningTasks) < maxActiveDialTasks {
 			nt := dialstate.newTasks(len(runningTasks)+len(queuedTasks), peers, time.Now())
 			queuedTasks = append(queuedTasks, startTasks(nt)...)
@@ -609,6 +629,7 @@ func (srv *Server) run(dialstate dialer) {
 
 running:
 	for {
+		//不断尝试去建立P2P的TCP连接
 		scheduleTasks()
 
 		//下面开始监听各个管道的事件，来处理peer的增删改操作
@@ -765,7 +786,7 @@ type tempError interface {
 // listenLoop runs in its own goroutine and accepts
 // inbound connections.
 func (srv *Server) listenLoop() {
-	//startListening 调用设置的
+	//startListening 调用设置的.在新的协程不断坚挺新连接进来
 	defer srv.loopWG.Done()
 	srv.log.Info("RLPx listener up", "self", srv.makeSelf(srv.listener, srv.ntab))
 
@@ -775,19 +796,21 @@ func (srv *Server) listenLoop() {
 	}
 	slots := make(chan struct{}, tokens)
 	for i := 0; i < tokens; i++ {
+		//先直接放入这么多个slot进去，稍后就一个个获取了，用来实现并发控制。
+		//因为实际上的链家请求简历，是通过协程进行的，并非在本协程处理，所以用了管道的形式来控制并发
 		slots <- struct{}{}
 	}
 
 	for {
 		// Wait for a handshake slot before accepting.
-		<-slots
+		<-slots //并发控制
 
 		var (
 			fd  net.Conn
 			err error
 		)
 		for {
-			//接受链接
+			//接受链接, 检查是否有问题，没问题就break
 			fd, err = srv.listener.Accept()
 			if tempErr, ok := err.(tempError); ok && tempErr.Temporary() {
 				srv.log.Debug("Temporary read error", "err", err)
@@ -813,8 +836,9 @@ func (srv *Server) listenLoop() {
 		srv.log.Trace("Accepted connection", "addr", fd.RemoteAddr())
 		//创建协程去处理这个链接
 		go func() {
+			//TCP连接是加密的，所以需要进行两边的握手，互相交换公钥
 			srv.SetupConn(fd, inboundConn, nil)
-			slots <- struct{}{}
+			slots <- struct{}{} //通知干从的 listenLoop 协程可以继续下一个并发了
 		}()
 	}
 }
@@ -827,6 +851,7 @@ func (srv *Server) SetupConn(fd net.Conn, flags connFlag, dialDest *discover.Nod
 	if self == nil {
 		return errors.New("shutdown")
 	}
+	//newTransport 目前使用的是RLPx加密协议，处理函数是newRLPX 
 	c := &conn{fd: fd, transport: srv.newTransport(fd), flags: flags, cont: make(chan error)}
 	err := srv.setupConn(c, flags, dialDest)
 	if err != nil {
@@ -837,6 +862,7 @@ func (srv *Server) SetupConn(fd net.Conn, flags connFlag, dialDest *discover.Nod
 }
 
 func (srv *Server) setupConn(c *conn, flags connFlag, dialDest *discover.Node) error {
+	//进行一个TCP协议上的握手
 	// Prevent leftover pending conns from entering the handshake.
 	srv.lock.Lock()
 	running := srv.running
@@ -893,6 +919,7 @@ func truncateName(s string) string {
 // checkpoint sends the conn to run, which performs the
 // post-handshake checks for the stage (posthandshake, addpeer).
 func (srv *Server) checkpoint(c *conn, stage chan<- *conn) error {
+	//通用的等待检查函数，用来等待某种事件的发生
 	select {
 	case stage <- c:
 	case <-srv.quit:

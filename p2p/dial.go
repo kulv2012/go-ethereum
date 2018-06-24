@@ -161,17 +161,20 @@ func (s *dialstate) removeStatic(n *discover.Node) {
 }
 
 func (s *dialstate) newTasks(nRunning int, peers map[discover.NodeID]*Peer, now time.Time) []task {
+	//按照一定优先级，查找可以连接的节点，首先从bootnode开始，然后从p2p 服务发现的节点中随机取一些出来，返回这些节点给调用方
+	//这函数由 (srv *Server) run(dialstate dialer) 来调用, 具体为scheduleTasks -> newTask
 	if s.start.IsZero() {
 		s.start = now
 	}
 
 	var newtasks []task
 	addDial := func(flag connFlag, n *discover.Node) bool {
+		//检查连接状态 , 如果连接可用，那么标记为正在连接，并且加到待连接任务newtasks 里面
 		if err := s.checkDial(n, peers); err != nil {
 			log.Trace("Skipping dial candidate", "id", n.ID, "addr", &net.TCPAddr{IP: n.IP, Port: int(n.TCP)}, "err", err)
 			return false
 		}
-		s.dialing[n.ID] = flag
+		s.dialing[n.ID] = flag //标记正在进行
 		newtasks = append(newtasks, &dialTask{flags: flag, dest: n})
 		return true
 	}
@@ -220,6 +223,8 @@ func (s *dialstate) newTasks(nRunning int, peers map[discover.NodeID]*Peer, now 
 	// dynamic dials.
 	randomCandidates := needDynDials / 2
 	if randomCandidates > 0 {
+		//从ntab里面随机取几个UDP服务发现的节点，然后去建立TCP连接 
+		//终于，TCP家里的连接有地方使用了， 那就是 scheduleTasks -> newTasks()->s.ntab.ReadRandomNodes 
 		n := s.ntab.ReadRandomNodes(s.randomNodes)
 		for i := 0; i < randomCandidates && i < n; i++ {
 			if addDial(dynDialedConn, s.randomNodes[i]) {
@@ -290,11 +295,14 @@ func (s *dialstate) taskDone(t task, now time.Time) {
 }
 
 func (t *dialTask) Do(srv *Server) {
+	//这函数用来跟一个节点建立链接，节点从哪来呢？bootnodes, 以及s.ntab.ReadRandomNodes(s.randomNodes) 返回的节点。
+	//调用方来自于 P2P.Server 的 loop协程，里面会scheduleTasks -> startTasks -> Do() 来创建连接，默认16个
 	if t.dest.Incomplete() {
 		if !t.resolve(srv) {
 			return
 		}
 	}
+	//进去，发送connect tcp
 	err := t.dial(srv, t.dest)
 	if err != nil {
 		log.Trace("Dial error", "task", t, "err", err)
@@ -347,11 +355,15 @@ type dialError struct {
 
 // dial performs the actual connection attempt.
 func (t *dialTask) dial(srv *Server, dest *discover.Node) error {
+	//连接某个TCP节点, 调用路径scheduleTasks -> startTasks -> Do()->Dial()
+	//下面其实是TCPDialer.Dial，  很简单，发送一个TCP链接请求 t.Dialer.Dial("tcp", addr.String())
+	//得到一个连接句柄
 	fd, err := srv.Dialer.Dial(dest)
 	if err != nil {
 		return &dialError{err}
 	}
 	mfd := newMeteredConn(fd, false)
+	//进行握手，创建安全连接
 	return srv.SetupConn(mfd, t.flags, dest)
 }
 
@@ -370,6 +382,7 @@ func (t *discoverTask) Do(srv *Server) {
 	srv.lastLookup = time.Now()
 	var target discover.NodeID
 	rand.Read(target[:])
+	//触发一次查找节点
 	t.results = srv.ntab.Lookup(target)
 }
 

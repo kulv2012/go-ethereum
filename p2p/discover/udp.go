@@ -127,6 +127,7 @@ func makeEndpoint(addr *net.UDPAddr, tcpPort uint16) rpcEndpoint {
 }
 
 func (t *udp) nodeFromRPC(sender *net.UDPAddr, rn rpcNode) (*Node, error) {
+	//检查节点是否合法，如果OK，这返回节点的信息
 	if rn.UDP <= 1024 {
 		return nil, errors.New("low port")
 	}
@@ -136,6 +137,7 @@ func (t *udp) nodeFromRPC(sender *net.UDPAddr, rn rpcNode) (*Node, error) {
 	if t.netrestrict != nil && !t.netrestrict.Contains(rn.IP) {
 		return nil, errors.New("not contained in netrestrict whitelist")
 	}
+	//返回简单的节点信息 
 	n := NewNode(rn.ID, rn.IP, rn.UDP, rn.TCP)
 	err := n.validateComplete()
 	return n, err
@@ -146,6 +148,7 @@ func nodeToRPC(n *Node) rpcNode {
 }
 
 type packet interface {
+	//每个不同类型的packet结构，主要是handle处理函数，给 ping,pong,findnode,neighbors 消息共享
 	handle(t *udp, from *net.UDPAddr, fromID NodeID, mac []byte) error
 	name() string
 }
@@ -159,17 +162,22 @@ type conn interface {
 
 // udp implements the RPC protocol.
 type udp struct {
+	//真正的UDP连接
 	conn        conn
 	netrestrict *netutil.Netlist
 	priv        *ecdsa.PrivateKey
 	ourEndpoint rpcEndpoint //UDP 对应的TCP地址，端口一样
 
+	//用来接受pending()函数上面设置的各个等待事件，然后会立即放到其他地方
 	addpending chan *pending
+
+	//用来处理收到数据后的处理流程的
 	gotreply   chan reply
 
 	closing chan struct{}
 	nat     nat.Interface
 
+	//匿名组合功能，这样udp也拥有了Table的方法
 	*Table
 }
 
@@ -198,6 +206,8 @@ type pending struct {
 
 	// errc receives nil when the callback indicates completion or an
 	// error if no further reply is received within the timeout.
+	//这个管道用来给调用方传递信息的， loop函数通过这个来告知调用方，
+	//OK， 收到你想要的包了，我已调用你的回调函数，结果放在管道里面，正确的话为nil
 	errc chan<- error
 }
 
@@ -265,6 +275,7 @@ func newUDP(c conn, cfg Config) (*Table, *udp, error) {
 	if err != nil {
 		return nil, nil, err
 	}
+	//显示的设置这个匿名组合的Table,  这个跟简单的匿名组合不一样，需要显示指定table指针
 	udp.Table = tab
 
 	//发送数据
@@ -307,12 +318,15 @@ func (t *udp) ping(toid NodeID, toaddr *net.UDPAddr) error {
 
 func (t *udp) waitping(from NodeID) error {
 	//不发送任何东西，直接等对方来ping我们?
+	//对的，如果对方ping 我们，就调用回调函数， 本函数会立即等待在return管道上面
 	return <-t.pending(from, pingPacket, func(interface{}) bool { return true })
 }
 
 // findnode sends a findnode request to the given node and waits until
 // the node has sent up to k neighbors.
 func (t *udp) findnode(toid NodeID, toaddr *net.UDPAddr, target NodeID) ([]*Node, error) {
+	//给toid 发送一个 findnodePacket包，询问距离target 比较近的节点有哪些
+	//注意以太坊的P2P扩散都是查询比较近的节点
 	//由Table.lookup函数调用，来查找一个节点的邻近节点
 	nodes := make([]*Node, 0, bucketSize)
 	nreceived := 0
@@ -322,6 +336,7 @@ func (t *udp) findnode(toid NodeID, toaddr *net.UDPAddr, target NodeID) ([]*Node
 		reply := r.(*neighbors)
 		for _, rn := range reply.Nodes {
 			nreceived++
+			//得到一个简单的node结构
 			n, err := t.nodeFromRPC(toaddr, rn)
 			if err != nil {
 				log.Trace("Invalid neighbor node received", "ip", rn.IP, "addr", toaddr, "err", err)
@@ -331,19 +346,21 @@ func (t *udp) findnode(toid NodeID, toaddr *net.UDPAddr, target NodeID) ([]*Node
 		}
 		return nreceived >= bucketSize
 	})
-	fmt.Println("findnode ", target )
+	//上面了一个管道事件，下面开始发送真正的findnode报文，然后进行等待了
 	t.send(toaddr, findnodePacket, &findnode{
 		Target:     target,
 		Expiration: uint64(time.Now().Add(expiration).Unix()),
 	})
+	//收到信息后会调用上面的回调函数，然后触发管道，然后返回nodes
 	err := <-errc
+
 	return nodes, err
 }
 
 // pending adds a reply callback to the pending reply queue.
 // see the documentation of type pending for a detailed explanation.
 func (t *udp) pending(id NodeID, ptype byte, callback func(interface{}) bool) <-chan error {
-	//ping函数调用这里，设置一个ping返回调用，并等待errC 
+	//ping或者findnode函数调用这里，设置一个ping返回调用，并等待errC 
 	//生成一个结果通知管道，生成一个pending结构放入t.addpending 里面，对方接到请求会调用callback，然后触发errC
 	ch := make(chan error, 1)
 	p := &pending{from: id, ptype: ptype, callback: callback, errc: ch}
@@ -353,12 +370,18 @@ func (t *udp) pending(id NodeID, ptype byte, callback func(interface{}) bool) <-
 	case <-t.closing:
 		ch <- errClosed
 	}
+	//返回这个ch给调用者去等待，而对于addpending的对端，
+	//也就是loop,这会在获取到一个ptype类型后，会发送一个nil给这个errC的管道
+	//这样做到阻塞的目的, 调用者只需要等待在这管道上即可
 	return ch
 }
 
 func (t *udp) handleReply(from NodeID, ptype byte, req packet) bool {
+	//收到一个ptype类型的包的回调
 	matched := make(chan bool, 1)
 	select {
+		//给t.gotreply发送换个数据包过去，给他去处理，怎么处理呢？
+		//就是调用当初等待在上面的回调函数，然后给回调函数上面的errC发送管道消息
 	case t.gotreply <- reply{from, ptype, req, matched}:
 		// loop will handle it
 		return <-matched
@@ -407,6 +430,7 @@ func (t *udp) loop() {
 
 		select {
 		case <-t.closing:
+			//关闭，将所有等待的协程触发，传递错误信息
 			for el := plist.Front(); el != nil; el = el.Next() {
 				el.Value.(*pending).errc <- errClosed
 			}
@@ -419,6 +443,8 @@ func (t *udp) loop() {
 			plist.PushBack(p)
 
 		case r := <-t.gotreply:
+			//收到对方发送的数据包后，就是在readLoop里面不断读取数据包后，调用对应类型的数据包的handle函数 
+			//后者会给gotreply 发送一个管道消息，带着对应的数据包
 			var matched bool
 			for el := plist.Front(); el != nil; el = el.Next() {
 				p := el.Value.(*pending)
@@ -480,6 +506,7 @@ var (
 )
 
 func init() {
+	//初始化一下 ，其实就是需要计算一下一个UDP包，可以放多少个 neighbors临接节点列表maxNeighbors
 	p := neighbors{Expiration: ^uint64(0)}
 	maxSizeNode := rpcNode{IP: make(net.IP, 16), UDP: ^uint16(0), TCP: ^uint16(0)}
 	for n := 0; ; n++ {
@@ -497,6 +524,7 @@ func init() {
 }
 
 func (t *udp) send(toaddr *net.UDPAddr, ptype byte, req packet) ([]byte, error) {
+	//给对方发送一个数据包
 	packet, hash, err := encodePacket(t.priv, ptype, req)
 	if err != nil {
 		return hash, err
@@ -505,6 +533,7 @@ func (t *udp) send(toaddr *net.UDPAddr, ptype byte, req packet) ([]byte, error) 
 }
 
 func (t *udp) write(toaddr *net.UDPAddr, what string, packet []byte) error {
+	//发送UDP数据包
 	_, err := t.conn.WriteToUDP(packet, toaddr)
 	log.Trace(">> "+what, "addr", toaddr, "err", err)
 	return err
@@ -535,6 +564,7 @@ func encodePacket(priv *ecdsa.PrivateKey, ptype byte, req interface{}) (packet, 
 
 // readLoop runs in its own goroutine. it handles incoming UDP packets.
 func (t *udp) readLoop(unhandled chan<- ReadPacket) {
+	//死循环不断读取UDP包然后调用handlePacket 进行处理，数据的发送调用write函数 直接发出
 	defer t.conn.Close()
 	if unhandled != nil {
 		defer close(unhandled)
@@ -545,6 +575,7 @@ func (t *udp) readLoop(unhandled chan<- ReadPacket) {
 	buf := make([]byte, 1280)
 	for {//下面是不是死循环了？退出的时候怎么处理的？有没有监听closeing
 		//测试了一下，死循环了。。。退出不了的，因为没有监听退出事件
+		//ReadFromUDP是底层函数，就是一个个的接受包，然后进行处理，处理方法就是调用handlePacket
 		nbytes, from, err := t.conn.ReadFromUDP(buf)
 		if netutil.IsTemporaryError(err) {
 			// Ignore temporary read errors.
@@ -566,18 +597,21 @@ func (t *udp) readLoop(unhandled chan<- ReadPacket) {
 }
 
 func (t *udp) handlePacket(from *net.UDPAddr, buf []byte) error {
+	//处理一个readLoop 里面读取到的UDP数据包，先解码， 然后调用包对应的handle
 	packet, fromID, hash, err := decodePacket(buf)
 	if err != nil {
 		log.Debug("Bad discv4 packet", "addr", from, "err", err)
 		return err
 	}
 	//调用对应的packet类型的handle函数， 比如： neighbors.handle , findnode.handle
+	//packet类型为 ping,pong,findnode, neighbors 等结构 
 	err = packet.handle(t, from, fromID, hash)
 	log.Trace("<< "+packet.name(), "addr", from, "err", err)
 	return err
 }
 
 func decodePacket(buf []byte) (packet, NodeID, []byte, error) {
+	//解码一个UDP包，变成ping,pong,findnode,neighbors 等结构
 	if len(buf) < headSize+1 {
 		return nil, NodeID{}, nil, errPacketTooSmall
 	}
@@ -591,6 +625,7 @@ func decodePacket(buf []byte) (packet, NodeID, []byte, error) {
 		return nil, NodeID{}, hash, err
 	}
 	var req packet
+	//根据包的类型，new对应的结构，注意他都实现了handle接口，所以商城可以调用
 	switch ptype := sigdata[0]; ptype {
 	case pingPacket:
 		req = new(ping)
@@ -609,9 +644,11 @@ func decodePacket(buf []byte) (packet, NodeID, []byte, error) {
 }
 
 func (req *ping) handle(t *udp, from *net.UDPAddr, fromID NodeID, mac []byte) error {
+	//收到ping的handle函数，基本上就是直接发送pongPacket 给对方
 	if expired(req.Expiration) {
 		return errExpired
 	}
+	//收到对方一个ping，我们立即回复一个pongPacket
 	t.send(from, pongPacket, &pong{
 		To:         makeEndpoint(from, req.From.TCP),
 		ReplyTok:   mac,
@@ -627,9 +664,11 @@ func (req *ping) handle(t *udp, from *net.UDPAddr, fromID NodeID, mac []byte) er
 func (req *ping) name() string { return "PING/v4" }
 
 func (req *pong) handle(t *udp, from *net.UDPAddr, fromID NodeID, mac []byte) error {
+	//收到一个pongPacket包，那么，handleReply就得干活了
 	if expired(req.Expiration) {
 		return errExpired
 	}
+	//通知loop的t.gotreply 去处理，然后返回结果
 	if !t.handleReply(fromID, pongPacket, req) {
 		return errUnsolicitedReply
 	}
@@ -639,9 +678,12 @@ func (req *pong) handle(t *udp, from *net.UDPAddr, fromID NodeID, mac []byte) er
 func (req *pong) name() string { return "PONG/v4" }
 
 func (req *findnode) handle(t *udp, from *net.UDPAddr, fromID NodeID, mac []byte) error {
+	//别人发我一个findnode，那么我需要告诉他我的peers了
+	//这个比较复杂
 	if expired(req.Expiration) {
 		return errExpired
 	}
+	//我是否已连接上了这个来源节点, 也就是发送这个包的人
 	if !t.db.hasBond(fromID) {
 		// No bond exists, we don't process the packet. This prevents
 		// an attack vector where the discovery protocol could be used
@@ -654,6 +696,7 @@ func (req *findnode) handle(t *udp, from *net.UDPAddr, fromID NodeID, mac []byte
 	}
 	target := crypto.Keccak256Hash(req.Target[:])
 	t.mutex.Lock()
+	//找一些距离target最近的节点
 	closest := t.closest(target, bucketSize).entries
 	t.mutex.Unlock()
 
@@ -661,16 +704,19 @@ func (req *findnode) handle(t *udp, from *net.UDPAddr, fromID NodeID, mac []byte
 	var sent bool
 	// Send neighbors in chunks with at most maxNeighbors per packet
 	// to stay below the 1280 byte limit.
+	//扫描这些最近的节点列表，然后一个包一个包的发送给对方
 	for _, n := range closest {
 		if netutil.CheckRelayIP(from.IP, n.IP) == nil {
 			p.Nodes = append(p.Nodes, nodeToRPC(n))
 		}
 		if len(p.Nodes) == maxNeighbors {
+			//给对方发送 neighborsPacket 包，里面包含节点列表
 			t.send(from, neighborsPacket, &p)
 			p.Nodes = p.Nodes[:0]
 			sent = true
 		}
 	}
+	//扫一个尾
 	if len(p.Nodes) > 0 || !sent {
 		t.send(from, neighborsPacket, &p)
 	}
@@ -683,6 +729,7 @@ func (req *neighbors) handle(t *udp, from *net.UDPAddr, fromID NodeID, mac []byt
 	if expired(req.Expiration) {
 		return errExpired
 	}
+	//收到一个neighbors 包，这个挺重要，我们需要处理对方发给我们的临接节点列表
 	if !t.handleReply(fromID, neighborsPacket, req) {
 		return errUnsolicitedReply
 	}

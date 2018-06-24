@@ -213,7 +213,8 @@ func (n *Node) Start() error {
 	for _, service := range services {//收集所有的这些服务的协议名称。
 		running.Protocols = append(running.Protocols, service.Protocols()...)
 	}
-	//启动P2P服务
+	//启动P2P服务, P2P服务的discover会自动发现附近的节点，
+	//并且可以调用scheduleTasks -> newTasks来得到可用节点，从而进行scheduleTasks -> startTasks -> Do()连接
 	if err := running.Start(); err != nil {
 		return convertFileLockError(err)
 	}
@@ -222,6 +223,8 @@ func (n *Node) Start() error {
 	//启动所有刚才创建的服务，分别调用， 如果出错就stop之前所有的服务并返回错误
 	for kind, service := range services {
 		// Start the next service, stopping all previous upon failure
+		//每个服务调用start的时候，都是传递了这个P2P结构，有意思，相当于P2P是一个底层传输基础
+		//以太坊的服务挂载包括 RegisterShhService， RegisterEthStatsService，RegisterEthService，RegisterDashboardService
 		if err := service.Start(running); err != nil {
 			for _, kind := range started {
 				services[kind].Stop()

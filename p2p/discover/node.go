@@ -60,6 +60,7 @@ type Node struct {
 // NewNode creates a new node. It is mostly meant to be used for
 // testing purposes.
 func NewNode(id NodeID, ip net.IP, udpPort, tcpPort uint16) *Node {
+	//节点信息，很简单
 	if ipv4 := ip.To4(); ipv4 != nil {
 		ip = ipv4
 	}

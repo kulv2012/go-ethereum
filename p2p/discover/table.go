@@ -57,7 +57,7 @@ const (
 	maxBondingPingPongs = 16 // Limit on the number of concurrent ping/pong interactions
 	maxFindnodeFailures = 5  // Nodes exceeding this limit are dropped
 
-	refreshInterval    = 30 * time.Minute
+	refreshInterval    = 30 * time.Minute //每30分钟刷新一下节点列表，重新进行findnode 
 	revalidateInterval = 10 * time.Second
 	copyNodesInterval  = 30 * time.Second
 	seedMinTableTime   = 5 * time.Minute
@@ -87,6 +87,7 @@ type Table struct {
 
 	nodeAddedHook func(*Node) // for testing
 
+	//net上有实现应用层的握手协议等ping， waitping，findnode， 交互还是得调用上层
 	net  transport
 	self *Node // metadata of the local node
 }
@@ -149,7 +150,7 @@ func newTable(t transport, ourID NodeID, ourAddr *net.UDPAddr, nodeDBPath string
 		}
 	}
 	tab.seedRand() //设置随机种子
-	//加载所有的种子节点，其中包括参数bootnodes 里面的节点
+	//加载所有的种子节点，其中包括参数bootnodes 里面的节点, 暂时不需要进行连接，连接在后面的loop之前进行
 	tab.loadSeedNodes(false)
 	// Start the background expiration goroutine after loading seeds so that the search for
 	// seed nodes also considers older nodes that would otherwise be removed by the
@@ -196,6 +197,7 @@ func (tab *Table) ReadRandomNodes(buf []*Node) (n int) {
 		return 0
 	}
 	// Shuffle the buckets.
+	//随机打乱顺序
 	for i := len(buckets) - 1; i > 0; i-- {
 		j := tab.rand.Intn(len(buckets))
 		buckets[i], buckets[j] = buckets[j], buckets[i]
@@ -265,12 +267,14 @@ func (tab *Table) Resolve(targetID NodeID) *Node {
 	// network interaction is required.
 	hash := crypto.Keccak256Hash(targetID[:])
 	tab.mutex.Lock()
+	//找它最近的节点
 	cl := tab.closest(hash, 1)
 	tab.mutex.Unlock()
 	if len(cl.entries) > 0 && cl.entries[0].ID == targetID {
 		return cl.entries[0]
 	}
 	// Otherwise, do a network lookup.
+	//是在不行就进行一次查找
 	result := tab.Lookup(targetID)
 	for _, n := range result {
 		if n.ID == targetID {
@@ -316,7 +320,10 @@ func (tab *Table) lookup(targetID NodeID, refreshIfEmpty bool) []*Node {
 		// first query will hit this case and run the bootstrapping
 		// logic.
 		//完全一个节点都没有，一般不会,如果为空那么调用refresh来触发一次刷新
-		//实测没进来
+		//实测没进来, 应该时候如果断网或者其他节点都挂掉了，那么此时没有节点连接，那么 
+		//需要阻塞出发一次刷新，期望能够连接上掐节点，同时， refreshIfEmpty=false 只会运行一次循环
+		//同时，由于 loop()->doRefresh->lookup 这样的调用关系，
+		//所以，doRefresh每次必须在协程进行调用，否则当前协程就会卡死，永远得不到管道信号
 		<-tab.refresh()
 		refreshIfEmpty = false
 	}
@@ -393,9 +400,10 @@ func (tab *Table) refresh() <-chan struct{} {
 func (tab *Table) loop() {
 	var (
 		revalidate     = time.NewTimer(tab.nextRevalidateTime())
-		refresh        = time.NewTicker(refreshInterval)
+		refresh        = time.NewTicker(refreshInterval) //30分钟进行刷新所有节点列表进行findnode
 		copyNodes      = time.NewTicker(copyNodesInterval)
 		revalidateDone = make(chan struct{})
+		//监听doRefresh 是否完成
 		refreshDone    = make(chan struct{})           // where doRefresh reports completion
 		waiting        = []chan struct{}{tab.initDone} // holds waiting callers while doRefresh runs
 	)
@@ -404,32 +412,38 @@ func (tab *Table) loop() {
 	defer copyNodes.Stop()
 
 	// Start initial refresh.
+	//先进行刷新，这也是启动p2p服务的第一次尝试连接其他节点
 	go tab.doRefresh(refreshDone)
 
 loop:
 	for {
 		select {
-		case <-refresh.C:
+		case <-refresh.C: //定时器到了，进行刷新
 			tab.seedRand()
 			if refreshDone == nil {
 				refreshDone = make(chan struct{})
 				go tab.doRefresh(refreshDone)
 			}
 		case req := <-tab.refreshReq:
+			//refresh() 函数会触发管道, 也只有一种情况，那就是在doRefresh 过程中，所有节点都失效了，需要主动刷一下
 			waiting = append(waiting, req)
 			if refreshDone == nil {
 				refreshDone = make(chan struct{})
 				go tab.doRefresh(refreshDone)
 			}
 		case <-refreshDone:
+			//等待refeshdone结束
 			for _, ch := range waiting {
 				close(ch)
 			}
 			waiting, refreshDone = nil, nil
+
+			//下面的定时器进行节点状态检查
 		case <-revalidate.C:
 			go tab.doRevalidate(revalidateDone)
 		case <-revalidateDone:
 			revalidate.Reset(tab.nextRevalidateTime())
+
 		case <-copyNodes.C:
 			go tab.copyBondedNodes()
 		case <-tab.closeReq:
@@ -465,7 +479,8 @@ func (tab *Table) doRefresh(done chan struct{}) {
 	tab.loadSeedNodes(true)
 
 	// Run self lookup to discover new neighbor nodes.
-	//根据最近的节点进行findNode查找邻近节点, 进行一次扩展
+	//根据最近的节点进行findNode查找邻近节点, 进行一次扩展, 查找其他节点的peers
+	//首先找距离我自己最近的节点
 	tab.lookup(tab.self.ID, false)
 
 	// The Kademlia paper specifies that the bucket refresh should
@@ -478,6 +493,7 @@ func (tab *Table) doRefresh(done chan struct{}) {
 	for i := 0; i < 3; i++ {
 		var target NodeID
 		crand.Read(target[:])
+		//找随机找几个
 		tab.lookup(target, false)
 	}
 }
@@ -503,6 +519,7 @@ func (tab *Table) loadSeedNodes(bond bool) {
 // doRevalidate checks that the last node in a random bucket is still live
 // and replaces or deletes the node if it isn't.
 func (tab *Table) doRevalidate(done chan<- struct{}) {
+	//保活，检查节点是否oK，如果不信就删掉
 	defer func() { done <- struct{}{} }()
 
 	last, bi := tab.nodeToRevalidate()
@@ -557,6 +574,7 @@ func (tab *Table) nextRevalidateTime() time.Duration {
 // copyBondedNodes adds nodes from the table to the database if they have been in the table
 // longer then minTableTime.
 func (tab *Table) copyBondedNodes() {
+	//节点活跃的时间超过5分后，加入数据库
 	tab.mutex.Lock()
 	defer tab.mutex.Unlock()
 
@@ -740,6 +758,9 @@ func (tab *Table) bucket(sha common.Hash) *bucket {
 // The caller must not hold tab.mutex.
 func (tab *Table) add(new *Node) {
 	//bond 在成功连接上一个节点后，也会调用这里来增加节点
+	//这里，由于是UDP通信，没有连接一说，怎么认为一个节点是可连接的呢？
+	//答案是：只要对方回复了我的PING 一个PONG包，或者他主动给我发了一个PING
+	//就认为是可以连接的，就加入到tab的buckets列表中
 	tab.mutex.Lock()
 	defer tab.mutex.Unlock()
 
