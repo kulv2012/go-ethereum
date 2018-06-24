@@ -41,6 +41,7 @@ const NodeIDBits = 512
 // Node represents a host on the network.
 // The fields of Node may not be modified.
 type Node struct {
+	//对应一个网络节点的底层地址表示, 有table来维护
 	IP       net.IP // len 4 for IPv4 or 16 for IPv6
 	UDP, TCP uint16 // port numbers
 	ID       NodeID // the node's public key

@@ -258,6 +258,9 @@ func newUDP(c conn, cfg Config) (*Table, *udp, error) {
 	// TODO: separate TCP port
 	//拆分出一个ip端口的rpcEndpoint，其实就是UDP -》 转成对应的TCP地址
 	udp.ourEndpoint = makeEndpoint(realaddr, uint16(realaddr.Port))
+	//厦门传入udp结构创建一个table结构，table负责对P2P协议节点发现功能的逻辑
+	//但是对于怎么对接点进行握手，交互收据，得依靠应用层udp提供ping,waitping, findnode 接口，
+	//这样table对于节点的应用层处理逻辑，调用上层的接口即可
 	tab, err := newTable(udp, PubkeyID(&cfg.PrivateKey.PublicKey), realaddr, cfg.NodeDBPath, cfg.Bootnodes)
 	if err != nil {
 		return nil, nil, err
@@ -279,6 +282,7 @@ func (t *udp) close() {
 
 // ping sends a ping message to the given node and waits for a reply.
 func (t *udp) ping(toid NodeID, toaddr *net.UDPAddr) error {
+	//发送一个ping的UDP消息给对方，并且等待pong结果返回，如果失败会返回非空，成功返回nil
 	req := &ping{
 		Version:    Version,
 		From:       t.ourEndpoint,
@@ -289,22 +293,31 @@ func (t *udp) ping(toid NodeID, toaddr *net.UDPAddr) error {
 	if err != nil {
 		return err
 	}
+	//先挂一个回调，这样发送完收到结果的时候，触发errC
+	//pending 返回的是一个结果通知管道
 	errc := t.pending(toid, pongPacket, func(p interface{}) bool {
 		return bytes.Equal(p.(*pong).ReplyTok, hash)
 	})
 	t.write(toaddr, req.name(), packet)
+	//发送后会等待结果，如果成功，ping函数才会返回
+	//在loop()里面会监听r.gotreply事件，从plist里面找到对应的链家然后在p.errc <- nil  
+	//这样本函数才会返回nil
 	return <-errc
 }
 
 func (t *udp) waitping(from NodeID) error {
+	//不发送任何东西，直接等对方来ping我们?
 	return <-t.pending(from, pingPacket, func(interface{}) bool { return true })
 }
 
 // findnode sends a findnode request to the given node and waits until
 // the node has sent up to k neighbors.
 func (t *udp) findnode(toid NodeID, toaddr *net.UDPAddr, target NodeID) ([]*Node, error) {
+	//由Table.lookup函数调用，来查找一个节点的邻近节点
 	nodes := make([]*Node, 0, bucketSize)
 	nreceived := 0
+	
+	//设置回应回调函数，等待类型为neighborsPacket的邻近节点包，如果类型对，就执行回调请求
 	errc := t.pending(toid, neighborsPacket, func(r interface{}) bool {
 		reply := r.(*neighbors)
 		for _, rn := range reply.Nodes {
@@ -318,6 +331,7 @@ func (t *udp) findnode(toid NodeID, toaddr *net.UDPAddr, target NodeID) ([]*Node
 		}
 		return nreceived >= bucketSize
 	})
+	fmt.Println("findnode ", target )
 	t.send(toaddr, findnodePacket, &findnode{
 		Target:     target,
 		Expiration: uint64(time.Now().Add(expiration).Unix()),
@@ -329,6 +343,8 @@ func (t *udp) findnode(toid NodeID, toaddr *net.UDPAddr, target NodeID) ([]*Node
 // pending adds a reply callback to the pending reply queue.
 // see the documentation of type pending for a detailed explanation.
 func (t *udp) pending(id NodeID, ptype byte, callback func(interface{}) bool) <-chan error {
+	//ping函数调用这里，设置一个ping返回调用，并等待errC 
+	//生成一个结果通知管道，生成一个pending结构放入t.addpending 里面，对方接到请求会调用callback，然后触发errC
 	ch := make(chan error, 1)
 	p := &pending{from: id, ptype: ptype, callback: callback, errc: ch}
 	select {
@@ -397,7 +413,9 @@ func (t *udp) loop() {
 			return
 
 		case p := <-t.addpending:
+			//ping 会设置一个pending的回调，将待回应的数据发到这个管道，然后才调用write发送数据
 			p.deadline = time.Now().Add(respTimeout)
+			//放到plist里面，如果有reply到来，会触发t.gotreply来进行扫描调用p.callback， 
 			plist.PushBack(p)
 
 		case r := <-t.gotreply:
@@ -411,6 +429,7 @@ func (t *udp) loop() {
 					// required for packet types that expect multiple
 					// reply packets.
 					if p.callback(r.data) {
+						//匹配成功，发送nil到管道，通知ping()函数返回
 						p.errc <- nil
 						plist.Remove(el)
 					}
@@ -418,6 +437,7 @@ func (t *udp) loop() {
 					contTimeouts = 0
 				}
 			}
+			//然后给r.matched发送管道消息
 			r.matched <- matched
 
 		case now := <-timeout.C:

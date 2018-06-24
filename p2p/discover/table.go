@@ -125,7 +125,7 @@ func newTable(t transport, ourID NodeID, ourAddr *net.UDPAddr, nodeDBPath string
 		return nil, err
 	}
 	tab := &Table{
-		net:        t,
+		net:        t, //net上有实现应用层的握手协议等ping， waitping，findnode， 交互还是得调用上层
 		db:         db,
 		self:       NewNode(ourID, ourAddr.IP, uint16(ourAddr.Port), uint16(ourAddr.Port)),
 		bonding:    make(map[NodeID]*bondproc),
@@ -305,6 +305,7 @@ func (tab *Table) lookup(targetID NodeID, refreshIfEmpty bool) []*Node {
 	for {
 		tab.mutex.Lock()
 		// generate initial result set
+		//调用closest来获取距离target最近的16个节点列表
 		result = tab.closest(target, bucketSize)
 		tab.mutex.Unlock()
 		if len(result.entries) > 0 || !refreshIfEmpty {
@@ -314,21 +315,31 @@ func (tab *Table) lookup(targetID NodeID, refreshIfEmpty bool) []*Node {
 		// We actually wait for the refresh to complete here. The very
 		// first query will hit this case and run the bootstrapping
 		// logic.
+		//完全一个节点都没有，一般不会,如果为空那么调用refresh来触发一次刷新
+		//实测没进来
 		<-tab.refresh()
 		refreshIfEmpty = false
 	}
 
 	for {
 		// ask the alpha closest nodes that we haven't asked yet
+		//下面的代码很巧妙，用alpha 来控制每次并发协程数，避免量太大了，默认为3 
+		//每次并发完成后，从reply管道读取一个，注意，是一个元素出来，那么，怎么控制数量的呢？
+		//答案是 pendingQueries， 这个代表我总共有多少请求需要去问，当前正在进行的，如果没有了，就会break
 		for i := 0; i < len(result.entries) && pendingQueries < alpha; i++ {
 			n := result.entries[i]
-			if !asked[n.ID] {
+			if !asked[n.ID] {// 没问过的
 				asked[n.ID] = true
+				//fmt.Printf("asking %+v\n", n )
 				pendingQueries++
+				//开一个协程去问一下其他节点
 				go func() {
 					// Find potential neighbors to bond with
+					//下面是一个查找邻近节点的函数 , 注意到这里是用的net成员，实际上就是udp.go里面的接口了
+					//代码在p2p/discover/udp.go
 					r, err := tab.net.findnode(n.ID, n.addr(), targetID)
 					if err != nil {
+						//记录失败数
 						// Bump the failure counter to detect and evacuate non-bonded entries
 						fails := tab.db.findFails(n.ID) + 1
 						tab.db.updateFindFails(n.ID, fails)
@@ -339,23 +350,32 @@ func (tab *Table) lookup(targetID NodeID, refreshIfEmpty bool) []*Node {
 							tab.delete(n)
 						}
 					}
+					//得到邻近节点后，连接他们,等到结果后放入reply管道里面
+					//如果节点链接成功，会加入到tab的节点列表的
 					reply <- tab.bondall(r)
 				}()
 			}
 		}
+		//如果没有正在进行的链接了，只有一种情况，result.entries都扫描完毕了，那么break， 
+		//千万不能继续进行reply了，不然会卡死的。从管道里面读取的次数，必须和正在能有的结果数相等
+		//这代码很妙
 		if pendingQueries == 0 {
 			// we have asked all closest nodes, stop the search
 			break
 		}
 		// wait for the next reply
+		//reply管道用来获取刚才开的findnode协程的结果，结果为新连接的节点列表
+		//注意下面的循环是对reply的结果来说的，不是对reply来说的，每次获取一个
 		for _, n := range <-reply {
 			if n != nil && !seen[n.ID] {
+				//fmt.Printf("result.push %+v\n", n )
 				seen[n.ID] = true
 				result.push(n, bucketSize)
 			}
 		}
 		pendingQueries--
 	}
+	//返回找到的其他节点, 此时节点以及由bondall加入到列表里面了
 	return result.entries
 }
 
@@ -434,14 +454,18 @@ loop:
 // full. seed nodes are inserted if the table is empty (initial
 // bootstrap or discarded faulty peers).
 func (tab *Table) doRefresh(done chan struct{}) {
+	//本函数在协程loop里面调用个，去连接我附近的所有节点, 
+	//第一步先连接我链接的所有节点，然后再去lookup其他节点如果链接成功就加入到节点列表。
 	defer close(done)
 
 	// Load nodes from the database and insert
 	// them. This should yield a few previously seen nodes that are
 	// (hopefully) still alive.
+	//真正触发连接节点，newTable的时候不会，doRefresh在协程loop里面调用，比较安全
 	tab.loadSeedNodes(true)
 
 	// Run self lookup to discover new neighbor nodes.
+	//根据最近的节点进行findNode查找邻近节点, 进行一次扩展
 	tab.lookup(tab.self.ID, false)
 
 	// The Kademlia paper specifies that the bucket refresh should
@@ -450,6 +474,7 @@ func (tab *Table) doRefresh(done chan struct{}) {
 	// (not hash-sized) and it is not easily possible to generate a
 	// sha3 preimage that falls into a chosen bucket.
 	// We perform a few lookups with a random target instead.
+	//为了安全再来一次随机查找
 	for i := 0; i < 3; i++ {
 		var target NodeID
 		crand.Read(target[:])
@@ -459,9 +484,11 @@ func (tab *Table) doRefresh(done chan struct{}) {
 
 func (tab *Table) loadSeedNodes(bond bool) {
 	//加载所有种子节点，包括tab.nursery  上设置的 Bootnodes初始启动节点
+	//如果是newTable初始化阶段，不会开始连接，bond为false
+	//到后面的go协程里面进行loop的时候，会先调用tab.doRefresh 来触发tab.loadSeedNodes(true)
 	seeds := tab.db.querySeeds(seedCount, seedMaxAge)
 	seeds = append(seeds, tab.nursery...)
-	if bond {
+	if bond {//刚开始创建table的时候，参数bond是false， 不会触发连接的
 		seeds = tab.bondall(seeds)
 	}
 	for i := range seeds {
@@ -568,6 +595,7 @@ func (tab *Table) len() (n int) {
 // bondall bonds with all given nodes concurrently and returns
 // those nodes for which bonding has probably succeeded.
 func (tab *Table) bondall(nodes []*Node) (result []*Node) {
+	//开个协程来一个连接对应的节点，然后等待结果，返回所有性连接的节点列表
 	rc := make(chan *Node, len(nodes))
 	for i := range nodes {
 		go func(n *Node) {
@@ -608,6 +636,7 @@ func (tab *Table) bond(pinged bool, id NodeID, addr *net.UDPAddr, tcpPort uint16
 	}
 	// Start bonding if we haven't seen this node for a while or if it failed findnode too often.
 	node, fails := tab.db.node(id), tab.db.findFails(id)
+	//如果是第一次进来，那么这个age会很大，就能进去
 	age := time.Since(tab.db.bondTime(id))
 	var result error
 	if fails > 0 || age > nodeDBNodeExpiration {
@@ -621,10 +650,12 @@ func (tab *Table) bond(pinged bool, id NodeID, addr *net.UDPAddr, tcpPort uint16
 			<-w.done
 		} else {
 			// Register a new bonding process.
+			//增加一个管道，用来等待完成
 			w = &bondproc{done: make(chan struct{})}
 			tab.bonding[id] = w
 			tab.bondmu.Unlock()
 			// Do the ping/pong. The result goes into w.
+			//下面尝试给对方发送ping并且阻塞得到结果后，返回，此时会审查一个w.n = NewNode 记录这个节点
 			tab.pingpong(w, pinged, id, addr, tcpPort)
 			// Unregister the process after it's done.
 			tab.bondmu.Lock()
@@ -632,8 +663,10 @@ func (tab *Table) bond(pinged bool, id NodeID, addr *net.UDPAddr, tcpPort uint16
 			tab.bondmu.Unlock()
 		}
 		// Retrieve the bonding results
+	//err上对应结果
 		result = w.err
 		if result == nil {
+			//w.n上就是对应的这个节点的信息了，pingpong函数设置的
 			node = w.n
 		}
 	}
@@ -641,6 +674,7 @@ func (tab *Table) bond(pinged bool, id NodeID, addr *net.UDPAddr, tcpPort uint16
 	// fails. It will be relaced quickly if it continues to be
 	// unresponsive.
 	if node != nil {
+		//node不为空，链接成功，会将节点加入到table里面
 		tab.add(node)
 		tab.db.updateFindFails(id, 0)
 	}
@@ -648,21 +682,30 @@ func (tab *Table) bond(pinged bool, id NodeID, addr *net.UDPAddr, tcpPort uint16
 }
 
 func (tab *Table) pingpong(w *bondproc, pinged bool, id NodeID, addr *net.UDPAddr, tcpPort uint16) {
+	//给对方发送UDP请求, 具体的请求内容由table.net 也就是udp 实现的接口来指定，具体在p2p/discover/udp.go 
 	// Request a bonding slot to limit network usage
+	//控制一下频率，一个个来
 	<-tab.bondslots
 	defer func() { tab.bondslots <- struct{}{} }()
 
 	// Ping the remote side and wait for a pong.
+	//实际上调用的是应用层的udp.ping，后者会主键一个ping包，里面包括版本号，from,to节点，以及过期时间。
+	//发送后会等待结果，如果成功，ping函数才会返回
+	//发送一个ping的UDP消息给对方，并且等待pong结果返回，如果失败会返回非空，成功返回nil
+	//debug.PrintStack()
 	if w.err = tab.ping(id, addr); w.err != nil {
 		close(w.done)
 		return
 	}
+	//如果之前没有ping过, 现在成功了，那就等一下对方会不会来ping我们。
+	//如果不会，这里会超时的
 	if !pinged {
 		// Give the remote node a chance to ping us before we start
 		// sending findnode requests. If they still remember us,
 		// waitping will simply time out.
 		tab.net.waitping(id)
 	}
+	//超时之后，增加这个节点
 	// Bonding succeeded, update the node database.
 	w.n = NewNode(id, addr.IP, uint16(addr.Port), tcpPort)
 	close(w.done)
@@ -672,6 +715,7 @@ func (tab *Table) pingpong(w *bondproc, pinged bool, id NodeID, addr *net.UDPAdd
 // database accordingly.
 func (tab *Table) ping(id NodeID, addr *net.UDPAddr) error {
 	tab.db.updateLastPing(id, time.Now())
+	//调用应用层的ping函数，对于UDP就是 udp.ping函数，在 p2p/discover/udp.go 里面
 	if err := tab.net.ping(id, addr); err != nil {
 		return err
 	}
@@ -695,6 +739,7 @@ func (tab *Table) bucket(sha common.Hash) *bucket {
 //
 // The caller must not hold tab.mutex.
 func (tab *Table) add(new *Node) {
+	//bond 在成功连接上一个节点后，也会调用这里来增加节点
 	tab.mutex.Lock()
 	defer tab.mutex.Unlock()
 
