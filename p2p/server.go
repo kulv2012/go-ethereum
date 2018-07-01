@@ -477,9 +477,9 @@ func (srv *Server) Start() (err error) {
 		}
 		//开启后台协程进行UDP监听, 如果有新的数据包到来，会通知到 unhandled（如果用的是DiscoveryV5） 上面
 		//discover包会使用conn这个UDP 监听链接，不断读取数据包进行处理
-		//同事，discover会自己维护cfg上面设置的Bootnodes 初始连接节点，
+		//同时，discover会自己维护cfg上面设置的Bootnodes 初始连接节点，
 		//进而进行p2p扩展，不断发送findnode包询问最近的临接节点，并加入到自己的Table.buckets列表中
-		//ntab 是衣蛾discover.udp结构，同时也匿名继承了discover.Table类
+		//ntab 是discover.udp结构，同时也匿名继承了discover.Table类
 		ntab, err := discover.ListenUDP(conn, cfg)
 		if err != nil {
 			return err

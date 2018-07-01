@@ -646,6 +646,7 @@ func (tab *Table) bondall(nodes []*Node) (result []*Node) {
 // If pinged is true, the remote node has just pinged us and one half
 // of the process can be skipped.
 func (tab *Table) bond(pinged bool, id NodeID, addr *net.UDPAddr, tcpPort uint16) (*Node, error) {
+	//尝试连接一个节点，发送ping并等待pond，如果能联通，加入table.
 	if id == tab.self.ID {
 		return nil, errors.New("is self")
 	}
@@ -707,7 +708,7 @@ func (tab *Table) pingpong(w *bondproc, pinged bool, id NodeID, addr *net.UDPAdd
 	defer func() { tab.bondslots <- struct{}{} }()
 
 	// Ping the remote side and wait for a pong.
-	//实际上调用的是应用层的udp.ping，后者会主键一个ping包，里面包括版本号，from,to节点，以及过期时间。
+	//table.ping 含简单，实际上是调用的tab.net.ping, 实际上调用的是应用层的udp.ping，后者会组建一个ping包，里面包括版本号，from,to节点，以及过期时间。
 	//发送后会等待结果，如果成功，ping函数才会返回
 	//发送一个ping的UDP消息给对方，并且等待pong结果返回，如果失败会返回非空，成功返回nil
 	//debug.PrintStack()

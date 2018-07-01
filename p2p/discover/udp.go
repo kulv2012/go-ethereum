@@ -268,7 +268,7 @@ func newUDP(c conn, cfg Config) (*Table, *udp, error) {
 	// TODO: separate TCP port
 	//拆分出一个ip端口的rpcEndpoint，其实就是UDP -》 转成对应的TCP地址
 	udp.ourEndpoint = makeEndpoint(realaddr, uint16(realaddr.Port))
-	//厦门传入udp结构创建一个table结构，table负责对P2P协议节点发现功能的逻辑
+	//下面传入udp结构创建一个table结构，table负责对P2P协议节点发现功能的逻辑
 	//但是对于怎么对接点进行握手，交互收据，得依靠应用层udp提供ping,waitping, findnode 接口，
 	//这样table对于节点的应用层处理逻辑，调用上层的接口即可
 	tab, err := newTable(udp, PubkeyID(&cfg.PrivateKey.PublicKey), realaddr, cfg.NodeDBPath, cfg.Bootnodes)
@@ -709,6 +709,7 @@ func (req *findnode) handle(t *udp, from *net.UDPAddr, fromID NodeID, mac []byte
 		if netutil.CheckRelayIP(from.IP, n.IP) == nil {
 			p.Nodes = append(p.Nodes, nodeToRPC(n))
 		}
+		//由于UDP有最大报文数限制，所以能够发送的邻近节点数目是有限的，必须做拆包发送，这也是UDP协议发包时必须注意的点。
 		if len(p.Nodes) == maxNeighbors {
 			//给对方发送 neighborsPacket 包，里面包含节点列表
 			t.send(from, neighborsPacket, &p)
