@@ -168,7 +168,7 @@ func (p *Peer) Inbound() bool {
 func newPeer(conn *conn, protocols []Protocol) *Peer {
 	protomap := matchProtocols(protocols, conn.caps, conn)
 	p := &Peer{
-		rw:       conn,
+		rw:       conn,//对应的网络连接
 		running:  protomap,
 		created:  mclock.Now(),
 		disc:     make(chan DiscReason),

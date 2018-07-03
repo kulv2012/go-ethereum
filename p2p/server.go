@@ -571,6 +571,7 @@ type dialer interface {
 }
 
 func (srv *Server) run(dialstate dialer) {
+	//连接池管理协程，负责维护TCP连接列表
 	//在协程里面运行, 开始监听各个信号量，处理peer的增删改
 	defer srv.loopWG.Done()
 	var (
@@ -676,13 +677,13 @@ running:
 			case <-srv.quit:
 				break running
 			}
-		case c := <-srv.addpeer:
+		case c := <-srv.addpeer://握手完成，进行peer的增加和启动监听事件。
 			// At this point the connection is past the protocol handshake.
 			// Its capabilities are known and the remote identity is verified.
 			err := srv.protoHandshakeChecks(peers, inboundCount, c)
 			if err == nil {
 				// The handshakes are done and it passed all checks.
-				p := newPeer(c, srv.Protocols)
+				p := newPeer(c, srv.Protocols) //创建一个peer结构。
 				// If message events are enabled, pass the peerFeed
 				// to the peer
 				if srv.EnableMsgEvents {
@@ -690,6 +691,7 @@ running:
 				}
 				name := truncateName(c.name)
 				srv.log.Debug("Adding p2p peer", "name", name, "addr", c.fd.RemoteAddr(), "peers", len(peers)+1)
+				//创建协程 去处理，增加这个peer
 				go srv.runPeer(p)
 				peers[c.id] = p
 				if p.Inbound() {
@@ -838,7 +840,7 @@ func (srv *Server) listenLoop() {
 		go func() {
 			//TCP连接是加密的，所以需要进行两边的握手，互相交换公钥
 			srv.SetupConn(fd, inboundConn, nil)
-			slots <- struct{}{} //通知干从的 listenLoop 协程可以继续下一个并发了
+			slots <- struct{}{} //通知上面的 listenLoop 协程可以继续下一个并发了
 		}()
 	}
 }
@@ -921,7 +923,7 @@ func truncateName(s string) string {
 func (srv *Server) checkpoint(c *conn, stage chan<- *conn) error {
 	//通用的等待检查函数，用来等待某种事件的发生
 	select {
-	case stage <- c:
+	case stage <- c: //将conn 的连接结构，插入管道中，这个管道stage是专门传输conn指针的
 	case <-srv.quit:
 		return errServerStopped
 	}
@@ -937,6 +939,7 @@ func (srv *Server) checkpoint(c *conn, stage chan<- *conn) error {
 // it waits until the Peer logic returns and removes
 // the peer.
 func (srv *Server) runPeer(p *Peer) {
+	//跟一个peer连接建立完成后，调用这里来启动一个peer的维护，监听工作
 	if srv.newPeerHook != nil {
 		srv.newPeerHook(p)
 	}
