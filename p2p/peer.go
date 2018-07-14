@@ -97,8 +97,8 @@ type PeerEvent struct {
 
 // Peer represents a connected remote node.
 type Peer struct {
-	rw      *conn
-	running map[string]*protoRW
+	rw      *conn //连接结构
+	running map[string]*protoRW  //支持的协议列表，比如&{Protocol:{Name:eth Version:63 Length:17 Run:0xae3010 NodeInfo:0xae3260 PeerInfo:0xae32c0} in:0xc421d16ba0 closed:<nil> wstart:<nil> werr:<nil> offset:16 w:0xc421b81720}
 	log     log.Logger
 	created mclock.AbsTime
 
@@ -166,10 +166,12 @@ func (p *Peer) Inbound() bool {
 }
 
 func newPeer(conn *conn, protocols []Protocol) *Peer {
+	//新建一个peer结构返回 
+	//protomap是我所支持的协议
 	protomap := matchProtocols(protocols, conn.caps, conn)
 	p := &Peer{
 		rw:       conn,//对应的网络连接
-		running:  protomap,
+		running:  protomap, //支持的协议列表，在peer。run之后，也会开启对应的协议协程
 		created:  mclock.Now(),
 		disc:     make(chan DiscReason),
 		protoErr: make(chan error, len(protomap)+1), // protocols + pingLoop
@@ -193,16 +195,19 @@ func (p *Peer) run() (remoteRequested bool, err error) {
 		reason     DiscReason // sent to the peer
 	)
 	p.wg.Add(2)
+	//启动消息读取协程，简单pingpong自己处理，协议消息发送到proto.in里面
 	go p.readLoop(readErr)
 	go p.pingLoop()
 
 	// Start all protocol handlers.
 	writeStart <- struct{}{}
+	//下面比较重要，启动对应的协议的协程, 具体看协议，比如eth等
 	p.startProtocols(writeStart, writeErr)
 
 	// Wait for an error or disconnect.
 loop:
 	for {
+		//下面处理一些简单的管道事件，退出事件等
 		select {
 		case err = <-writeErr:
 			// A write finished. Allow the next write to start if
@@ -235,6 +240,7 @@ loop:
 }
 
 func (p *Peer) pingLoop() {
+	//定时发送ping消息
 	ping := time.NewTimer(pingInterval)
 	defer p.wg.Done()
 	defer ping.Stop()
@@ -253,14 +259,18 @@ func (p *Peer) pingLoop() {
 }
 
 func (p *Peer) readLoop(errc chan<- error) {
+	//读取对方的数据然后处理, 会格局消息的类型调用对应handle
 	defer p.wg.Done()
 	for {
+		//这里的ReadMsg其实是个接口，对应不同连接的处理函数，比如对于rlpx传输协议，那么使用的是rlpxFrameRW 接口的读取函数，会进行加解密处理
+		//读取到消息后就返回
 		msg, err := p.rw.ReadMsg()
 		if err != nil {
 			errc <- err
 			return
 		}
 		msg.ReceivedAt = time.Now()
+		//调用handle进行消息解析
 		if err = p.handle(msg); err != nil {
 			errc <- err
 			return
@@ -269,6 +279,7 @@ func (p *Peer) readLoop(errc chan<- error) {
 }
 
 func (p *Peer) handle(msg Msg) error {
+	//根据消息Code处理，简单消息直接处理，应用层消息放入对应的协议的in管道里面
 	switch {
 	case msg.Code == pingMsg:
 		msg.Discard()
@@ -284,11 +295,21 @@ func (p *Peer) handle(msg Msg) error {
 		return msg.Discard()
 	default:
 		// it's a subprotocol message
+		//是一条应用层的协议，那么插入到对应协议的管道里面让其处理即可
+		//找到对应的协议，比如eth
 		proto, err := p.getProto(msg.Code)
 		if err != nil {
 			return fmt.Errorf("msg code out of range: %v", msg.Code)
 		}
+		//这里有意思的地方在于，如果是应用层消息，就把消息插入到管道中，
+		//因为一般的应用层，是有等待事件循环的，这样将消息就完美的抛给了对方
+		//而这个proto.in在哪处理呢？答案就是 matchProtocols()里面匹配到协议后
+		//会创建&protoRW{Protocol: proto, offset: offset, in: make(chan Msg), w: rw} 结构，
+		//里面包含in管道，然后在(p *Peer) run()里面 startProtocols 的时候，会开始对每个协议创建一个协程进行处理的
 		select {
+			//那么，消费端在哪呢?
+			//答案是： peer.startProtocols()->run()->ProtocolManager.handle()-> ProtocolManager.handleMsg()->ReadMsg()
+			//后者实际上就是 protoRW.ReadMsg().
 		case proto.in <- msg:
 			return nil
 		case <-p.closed:
@@ -312,6 +333,7 @@ func countMatchingProtocols(protocols []Protocol, caps []Cap) int {
 
 // matchProtocols creates structures for matching named subprotocols.
 func matchProtocols(protocols []Protocol, caps []Cap, rw MsgReadWriter) map[string]*protoRW {
+	//对rw对应的链接所支持的协议，查询我自己是否支持该协议， 返回能够匹配的上的协议
 	sort.Sort(capsByNameAndVersion(caps))
 	offset := baseProtocolLength
 	result := make(map[string]*protoRW)
@@ -336,8 +358,13 @@ outer:
 }
 
 func (p *Peer) startProtocols(writeStart <-chan struct{}, writeErr chan<- error) {
+	//每个新的peer 会调用这里，启动这个链接后对应的协议处理函数
+	//创建 (len(p.running) 个协程去单独一个个处理对应节点支持的协议 协程，
+	//在readLoop->handle() 函数里面碰到非ping, pong消息后，会将消息插入到proto.in里面，进而被处理
 	p.wg.Add(len(p.running))
+	//默认基本就只有一个协议： {Protocol:{Name:eth Version:63 Length:17 Run:0xae30b0 NodeInfo:0xae3300 PeerInfo:0xae3360} in:0xc421d914a0 closed:<nil> wstart:<nil> werr:<nil> offset:16 w:0xc4219adb80}
 	for _, proto := range p.running {
+		//proto 是protoRW 结构 , 里面有ReadMsg 和w 的写入函数
 		proto := proto
 		proto.closed = p.closed
 		proto.wstart = writeStart
@@ -347,7 +374,11 @@ func (p *Peer) startProtocols(writeStart <-chan struct{}, writeErr chan<- error)
 			rw = newMsgEventer(rw, p.events, p.ID(), proto.Name)
 		}
 		p.log.Trace(fmt.Sprintf("Starting protocol %s/%d", proto.Name, proto.Version))
+		//创建协程来处理每一个协议。协议举个例子：
+		//startProtocols : &{Protocol:{Name:eth Version:63 Length:17 Run:0xae3010 NodeInfo:0xae3260 PeerInfo:0xae32c0} in:0xc421d16ba0 closed:<nil> wstart:<nil> werr:<nil> offset:16 w:0xc421b81720}
 		go func() {
+			//对于eth协议，处理函数在eth/handler.go ->NewProtocolManager里实现的RUN, 是个匿名函数
+			//run 里面会调用ProtocolManager.handle 函数进行协议握手等
 			err := proto.Run(p, rw)
 			if err == nil {
 				p.log.Trace(fmt.Sprintf("Protocol %s/%d returned", proto.Name, proto.Version))
@@ -364,6 +395,7 @@ func (p *Peer) startProtocols(writeStart <-chan struct{}, writeErr chan<- error)
 // getProto finds the protocol responsible for handling
 // the given message code.
 func (p *Peer) getProto(code uint64) (*protoRW, error) {
+	//查询所有的协议，然后返回
 	for _, proto := range p.running {
 		if code >= proto.offset && code < proto.offset+proto.Length {
 			return proto, nil
@@ -374,12 +406,13 @@ func (p *Peer) getProto(code uint64) (*protoRW, error) {
 
 type protoRW struct {
 	Protocol
+	//当读取到消息后，非Ping pong 会写入到这管道
 	in     chan Msg        // receices read messages
 	closed <-chan struct{} // receives when peer is shutting down
 	wstart <-chan struct{} // receives when write may start
 	werr   chan<- error    // for write results
 	offset uint64
-	w      MsgWriter
+	w      MsgWriter //实现了消息写入接口
 }
 
 func (rw *protoRW) WriteMsg(msg Msg) (err error) {
@@ -402,6 +435,8 @@ func (rw *protoRW) WriteMsg(msg Msg) (err error) {
 }
 
 func (rw *protoRW) ReadMsg() (Msg, error) {
+	//从rw的管道里面去读取消息。这消息是在(p *Peer) handle(msg Msg)  里面设置的。
+	//而本函数的调用方是谁呢，是peer.startProtocols启动的对应协议的携程来调用，比如eth.ProtocolManager 里面调用handleMsg 进而读取
 	select {
 	case msg := <-rw.in:
 		msg.Code -= rw.offset

@@ -68,11 +68,12 @@ type peer struct {
 }
 
 func newPeer(version int, p *p2p.Peer, rw p2p.MsgReadWriter) *peer {
+	//简单的创建一个peer结构并返回
 	id := p.ID()
 
 	return &peer{
 		Peer:        p,
-		rw:          rw,
+		rw:          rw, //连接结构，不过这里，网络读写根据具体协议来，可能是rlpxFrameRW ， 也就是rlpx协议
 		version:     version,
 		id:          fmt.Sprintf("%x", id[:8]),
 		knownTxs:    set.New(),

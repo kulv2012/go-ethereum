@@ -654,6 +654,7 @@ func (rw *rlpxFrameRW) WriteMsg(msg Msg) error {
 }
 
 func (rw *rlpxFrameRW) ReadMsg() (msg Msg, err error) {
+	//加密的消息读取函数
 	// read the header
 	headbuf := make([]byte, 32)
 	if _, err := io.ReadFull(rw.conn, headbuf); err != nil {

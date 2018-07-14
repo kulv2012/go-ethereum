@@ -83,6 +83,7 @@ type MsgWriter interface {
 // Implementations should ensure that ReadMsg and WriteMsg can be
 // called simultaneously from multiple goroutines.
 type MsgReadWriter interface {
+	//网络读写方法
 	MsgReader
 	MsgWriter
 }

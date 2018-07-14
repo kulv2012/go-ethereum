@@ -114,6 +114,7 @@ type Config struct {
 	// Protocols should contain the protocols supported
 	// by the server. Matching protocols are launched for
 	// each peer.
+	//支持的协议， 空跑的话就是：  {Name:eth Version:63 Length:17 Run:0xae30b0 NodeInfo:0xae3300 PeerInfo:0xae3360} {Name:eth Version:62 Length:8 Run:0xae30b0 NodeInfo:0xae3300 PeerInfo:0xae3360}
 	Protocols []Protocol `toml:"-"`
 
 	// If ListenAddr is set to a non-nil address, the server
@@ -205,7 +206,7 @@ const (
 // during the two handshakes.
 type conn struct {
 	fd net.Conn
-	transport
+	transport  //这是一个重要的接口，包含网络读写的方法
 	flags connFlag
 	cont  chan error      // The run loop uses cont to signal errors to SetupConn.
 	id    discover.NodeID // valid after the encryption handshake
@@ -220,7 +221,7 @@ type transport interface {
 	// The MsgReadWriter can only be used after the encryption
 	// handshake has completed. The code uses conn.id to track this
 	// by setting it to a non-nil value after the encryption handshake.
-	MsgReadWriter
+	MsgReadWriter  //真正的消息读写方法
 	// transports must provide Close because we use MsgPipe in some of
 	// the tests. Closing the actual network connection doesn't do
 	// anything in those tests because NsgPipe doesn't use it.
@@ -683,7 +684,9 @@ running:
 			err := srv.protoHandshakeChecks(peers, inboundCount, c)
 			if err == nil {
 				// The handshakes are done and it passed all checks.
+				//空跑的话就这两个协议，eth: {Name:eth Version:63 Length:17 Run:0xae30b0 NodeInfo:0xae3300 PeerInfo:0xae3360} {Name:eth Version:62 Length:8 Run:0xae30b0 NodeInfo:0xae3300 PeerInfo:0xae3360}
 				p := newPeer(c, srv.Protocols) //创建一个peer结构。
+				fmt.Printf("Protocols %+v\n" , srv.Protocols )
 				// If message events are enabled, pass the peerFeed
 				// to the peer
 				if srv.EnableMsgEvents {
@@ -853,7 +856,7 @@ func (srv *Server) SetupConn(fd net.Conn, flags connFlag, dialDest *discover.Nod
 	if self == nil {
 		return errors.New("shutdown")
 	}
-	//newTransport 目前使用的是RLPx加密协议，处理函数是newRLPX 
+	//newTransport 目前使用的是RLPx加密协议，处理函数是newRLPX， 所以对于网络的读写，都是使用rlpxFrameRW接口去完成的
 	c := &conn{fd: fd, transport: srv.newTransport(fd), flags: flags, cont: make(chan error)}
 	err := srv.setupConn(c, flags, dialDest)
 	if err != nil {

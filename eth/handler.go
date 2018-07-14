@@ -133,12 +133,16 @@ func NewProtocolManager(config *params.ChainConfig, mode downloader.SyncMode, ne
 			Name:    ProtocolName,
 			Version: version,
 			Length:  ProtocolLengths[i],
+			//p2p的Peer.startProtocols 会逐一启动每个协议的Run函数， 
 			Run: func(p *p2p.Peer, rw p2p.MsgReadWriter) error {
+				//来一个新的peer后会调用这里, 创建一个通用peer结构
 				peer := manager.newPeer(int(version), p, rw)
 				select {
+					//newPeerCh 似乎没什么用？ 触发的管道在ProtocolManager.syncer()
 				case manager.newPeerCh <- peer:
 					manager.wg.Add(1)
 					defer manager.wg.Done()
+					//调用对应的handle 进行处理
 					return manager.handle(peer)
 				case <-manager.quitSync:
 					return p2p.DiscQuitting
@@ -243,12 +247,15 @@ func (pm *ProtocolManager) Stop() {
 }
 
 func (pm *ProtocolManager) newPeer(pv int, p *p2p.Peer, rw p2p.MsgReadWriter) *peer {
+	// 参数rw 对于eth来说，是proto 是protoRW 结构 , 里面有ReadMsg 和w 的写入函数
 	return newPeer(pv, p, newMeteredMsgWriter(rw))
 }
 
 // handle is the callback invoked to manage the life cycle of an eth peer. When
 // this function terminates, the peer is disconnected.
 func (pm *ProtocolManager) handle(p *peer) error {
+	//th/handler.go ->NewProtocolManager里实现的Run 调用这里。 当有一个新的链接建立完成后会调用到这里来进行处理
+	//基本是进行协议处理，读取消息在p2p/peer.go 的 ReadLoop里面，后者会将消息发送到proto.in里面
 	// Ignore maxPeers if this is a trusted peer
 	if pm.peers.Len() >= pm.maxPeers && !p.Peer.Info().Network.Trusted {
 		return p2p.DiscTooManyPeers
@@ -306,6 +313,7 @@ func (pm *ProtocolManager) handle(p *peer) error {
 	}
 	// main loop. handle incoming messages.
 	for {
+		//进入消息处理循环，不断读取，处理消息
 		if err := pm.handleMsg(p); err != nil {
 			p.Log().Debug("Ethereum message handling failed", "err", err)
 			return err
@@ -316,8 +324,11 @@ func (pm *ProtocolManager) handle(p *peer) error {
 // handleMsg is invoked whenever an inbound message is received from a remote
 // peer. The remote connection is torn down upon returning any error.
 func (pm *ProtocolManager) handleMsg(p *peer) error {
+	//加入一个eth节点后，会辗转从 p2p.startProtocols 调用到这里
 	// Read the next message from the remote peer, and ensure it's fully consumed
-	msg, err := p.rw.ReadMsg()
+	//对于eth, 这个读函数其实是proto 是protoRW 结构 , 里面有ReadMsg 和w 的写入函数 ，
+	//实际上读取函数是protoRW.ReadMsg ， 后者其实是从 管道rw.in里面读取的数据。这个数据是Peer.readLoop写入的
+	msg, err := p.rw.ReadMsg() //实际的消息处理函数在 rlpxFrameRW， 对应rlpx 传输协议的话
 	if err != nil {
 		return err
 	}
