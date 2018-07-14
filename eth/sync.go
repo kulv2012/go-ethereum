@@ -44,6 +44,7 @@ type txsync struct {
 
 // syncTransactions starts sending all currently pending transactions to the given peer.
 func (pm *ProtocolManager) syncTransactions(p *peer) {
+	//ProtocolManager) handle 调用这里，来把我这边的未完成的交易发给对方
 	var txs types.Transactions
 	pending, _ := pm.txpool.Pending()
 	for _, batch := range pending {
@@ -52,6 +53,7 @@ func (pm *ProtocolManager) syncTransactions(p *peer) {
 	if len(txs) == 0 {
 		return
 	}
+	//将这些待处理交易发送到txsyncCh 里面进行处理, 在txsyncLoop里面处理的
 	select {
 	case pm.txsyncCh <- &txsync{p, txs}:
 	case <-pm.quitSync:
@@ -63,6 +65,8 @@ func (pm *ProtocolManager) syncTransactions(p *peer) {
 // transactions. In order to minimise egress bandwidth usage, we send
 // the transactions in small packs to one peer at a time.
 func (pm *ProtocolManager) txsyncLoop() {
+	//开启交易同步现成，主要是发送交易给别人。 一个新连接到来的时候，
+	//会调用到syncTransactions() 来将我的待处理交易同步给对方
 	var (
 		pending = make(map[discover.NodeID]*txsync)
 		sending = false               // whether a send is active
@@ -107,6 +111,7 @@ func (pm *ProtocolManager) txsyncLoop() {
 
 	for {
 		select {
+			//给对方同步我这边的未处理交易
 		case s := <-pm.txsyncCh:
 			pending[s.p.ID()] = s
 			if !sending {

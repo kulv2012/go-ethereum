@@ -97,7 +97,7 @@ type PeerEvent struct {
 
 // Peer represents a connected remote node.
 type Peer struct {
-	rw      *conn //连接结构
+	rw      *conn //连接结构, 里面实现了读写的传输接口transport， 对于TCP连接，可以参考 Server.SetupConn()， 以及srv.newTransport(fd)
 	running map[string]*protoRW  //支持的协议列表，比如&{Protocol:{Name:eth Version:63 Length:17 Run:0xae3010 NodeInfo:0xae3260 PeerInfo:0xae32c0} in:0xc421d16ba0 closed:<nil> wstart:<nil> werr:<nil> offset:16 w:0xc421b81720}
 	log     log.Logger
 	created mclock.AbsTime
@@ -186,7 +186,7 @@ func (p *Peer) Log() log.Logger {
 }
 
 func (p *Peer) run() (remoteRequested bool, err error) {
-	//当平p模块对一个节点握手协议处理完后，addpeer队列接收到，然后调用go srv.runPeer(p) 创建协程，最后调用这里
+	//当P2P模块对一个节点握手协议处理完后，addpeer队列接收到，然后调用go srv.runPeer(p) 创建协程，最后调用这里
 	//在协里面维护本节点对于其他节点的链接。怎么维护呢：建立一个事件读写协程，以及管理协程。
 	var (
 		writeStart = make(chan struct{}, 1)

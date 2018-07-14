@@ -232,11 +232,13 @@ func (p *peer) RequestReceipts(hashes []common.Hash) error {
 // Handshake executes the eth protocol handshake, negotiating version number,
 // network IDs, difficulties, head and genesis blocks.
 func (p *peer) Handshake(network uint64, td *big.Int, head common.Hash, genesis common.Hash) error {
+	//eth层面的协议握手，先发送我的区块链状态信息，然后读取对方返回的状态，设置到p.td, p.head 上面
 	// Send out own handshake in a new thread
 	errc := make(chan error, 2)
 	var status statusData // safe to read after two values have been received from errc
 
 	go func() {
+		//发送我的当前最新信息
 		errc <- p2p.Send(p.rw, StatusMsg, &statusData{
 			ProtocolVersion: uint32(p.version),
 			NetworkId:       network,
@@ -316,6 +318,7 @@ func newPeerSet() *peerSet {
 // Register injects a new peer into the working set, or returns an error if the
 // peer is already known.
 func (ps *peerSet) Register(p *peer) error {
+	//将peer加入到我的peers hash里面 
 	ps.lock.Lock()
 	defer ps.lock.Unlock()
 

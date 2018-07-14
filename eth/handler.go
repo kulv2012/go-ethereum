@@ -218,6 +218,7 @@ func (pm *ProtocolManager) Start(maxPeers int) {
 
 	// start sync handlers
 	go pm.syncer()
+	//开启交易同步现成，主要是发送交易给别人。 一个新连接到来的时候，会调用到syncTransactions() 来将我的待处理交易同步给对方
 	go pm.txsyncLoop()
 }
 
@@ -270,6 +271,8 @@ func (pm *ProtocolManager) handle(p *peer) error {
 		number  = head.Number.Uint64()
 		td      = pm.blockchain.GetTd(hash, number)
 	)
+	//eth层面的协议握手，先发送我的区块链状态信息，然后读取对方返回的状态，设置到p.td, p.head 上面
+	//rlpx层面的握手已经在p2p/peer 层面完成了
 	if err := p.Handshake(pm.networkId, td, hash, genesis.Hash()); err != nil {
 		p.Log().Debug("Ethereum handshake failed", "err", err)
 		return err
@@ -278,6 +281,7 @@ func (pm *ProtocolManager) handle(p *peer) error {
 		rw.Init(p.version)
 	}
 	// Register the peer locally
+	//将peer加入到我的peers hash里面 
 	if err := pm.peers.Register(p); err != nil {
 		p.Log().Error("Ethereum peer registration failed", "err", err)
 		return err
@@ -290,6 +294,8 @@ func (pm *ProtocolManager) handle(p *peer) error {
 	}
 	// Propagate existing transactions. new transactions appearing
 	// after this will be sent via broadcasts.
+	//来把我这边的未完成的交易发给对方 , 最终会通过txsyncLoop 协程进行发送TxMsg 类型的消息给对方，
+	//对方收到消息后会由handle()->handleMsg()处理
 	pm.syncTransactions(p)
 
 	// If we're DAO hard-fork aware, validate any remote peer with regard to the hard-fork
@@ -352,7 +358,7 @@ func (pm *ProtocolManager) handleMsg(p *peer) error {
 		}
 		hashMode := query.Origin.Hash != (common.Hash{})
 
-		// Gather headers until the fetch or network limits is reached
+		// Gathed headers until the fetch or network limits is reached
 		var (
 			bytes   common.StorageSize
 			headers []*types.Header
@@ -666,6 +672,7 @@ func (pm *ProtocolManager) handleMsg(p *peer) error {
 		}
 
 	case msg.Code == TxMsg:
+		//对方通过他的txsyncLoop循环给我发送的SendTransactions 交易
 		// Transactions arrived, make sure we have a valid and fresh chain to handle them
 		if atomic.LoadUint32(&pm.acceptTxs) == 0 {
 			break
@@ -680,8 +687,10 @@ func (pm *ProtocolManager) handleMsg(p *peer) error {
 			if tx == nil {
 				return errResp(ErrDecode, "transaction %d is nil", i)
 			}
+			//将这比交易加入到一直交易hash 里面，内存缓存
 			p.MarkTransaction(tx.Hash())
 		}
+		//将交易加入到我的待处理列表
 		pm.txpool.AddRemotes(txs)
 
 	default:
