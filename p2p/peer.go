@@ -195,7 +195,7 @@ func (p *Peer) run() (remoteRequested bool, err error) {
 		reason     DiscReason // sent to the peer
 	)
 	p.wg.Add(2)
-	//启动消息读取协程，简单pingpong自己处理，协议消息发送到proto.in里面
+	//启动消息读取协程，简单pingpong自己处理，协议消息发送到proto.in里面, 由对应的协议去读取，一般也是调用特殊的ReadMsg函数从管道读取内容
 	go p.readLoop(readErr)
 	go p.pingLoop()
 
@@ -406,9 +406,11 @@ func (p *Peer) getProto(code uint64) (*protoRW, error) {
 
 type protoRW struct {
 	Protocol
-	//当读取到消息后，非Ping pong 会写入到这管道
+	//当读取到消息后，非Ping pong 会写入到这管道. 由对应的协议去读取，一般回调教也难怪protoRW.ReadMsg
 	in     chan Msg        // receices read messages
 	closed <-chan struct{} // receives when peer is shutting down
+
+	//startProtocols 里面设置的用来控制消息发送的串行化的
 	wstart <-chan struct{} // receives when write may start
 	werr   chan<- error    // for write results
 	offset uint64
@@ -436,7 +438,8 @@ func (rw *protoRW) WriteMsg(msg Msg) (err error) {
 
 func (rw *protoRW) ReadMsg() (Msg, error) {
 	//从rw的管道里面去读取消息。这消息是在(p *Peer) handle(msg Msg)  里面设置的。
-	//而本函数的调用方是谁呢，是peer.startProtocols启动的对应协议的携程来调用，比如eth.ProtocolManager 里面调用handleMsg 进而读取
+	//而本函数的调用方是谁呢，是peer.startProtocols启动的对应协议的携程来调用，
+	//比如eth.ProtocolManager 里面调用handleMsg 进而读取
 	select {
 	case msg := <-rw.in:
 		msg.Code -= rw.offset

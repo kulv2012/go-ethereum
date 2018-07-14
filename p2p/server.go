@@ -957,6 +957,7 @@ func (srv *Server) runPeer(p *Peer) {
 	})
 
 	// run the protocol
+	//真正的peer处理函数，启动，开始进行消息读取，以及协议方面的处理，通知对应的协议层，增加了一个连接了
 	remoteRequested, err := p.run()
 
 	// broadcast peer drop

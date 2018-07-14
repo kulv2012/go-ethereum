@@ -328,7 +328,7 @@ func (pm *ProtocolManager) handleMsg(p *peer) error {
 	// Read the next message from the remote peer, and ensure it's fully consumed
 	//对于eth, 这个读函数其实是proto 是protoRW 结构 , 里面有ReadMsg 和w 的写入函数 ，
 	//实际上读取函数是protoRW.ReadMsg ， 后者其实是从 管道rw.in里面读取的数据。这个数据是Peer.readLoop写入的
-	msg, err := p.rw.ReadMsg() //实际的消息处理函数在 rlpxFrameRW， 对应rlpx 传输协议的话
+	msg, err := p.rw.ReadMsg()  //此时消息其实已经读取到应用层了，放在管道.proto.in里面。
 	if err != nil {
 		return err
 	}
