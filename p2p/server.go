@@ -900,6 +900,7 @@ func (srv *Server) setupConn(c *conn, flags connFlag, dialDest *discover.Node) e
 		return DiscUnexpectedIdentity
 	}
 	c.caps, c.name = phs.Caps, phs.Name
+	//将connection放入srv.addpeer中，并等待在c.cont上面，loop那边会触发cont的
 	err = srv.checkpoint(c, srv.addpeer)
 	if err != nil {
 		clog.Trace("Rejected peer", "err", err)
@@ -940,11 +941,13 @@ func (srv *Server) checkpoint(c *conn, stage chan<- *conn) error {
 // the peer.
 func (srv *Server) runPeer(p *Peer) {
 	//跟一个peer连接建立完成后，调用这里来启动一个peer的维护，监听工作
+	//go srv.runPeer(p)协程调用
 	if srv.newPeerHook != nil {
 		srv.newPeerHook(p)
 	}
 
 	// broadcast peer add
+	//广播给别人
 	srv.peerFeed.Send(&PeerEvent{
 		Type: PeerEventTypeAdd,
 		Peer: p.ID(),

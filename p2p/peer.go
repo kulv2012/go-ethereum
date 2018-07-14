@@ -184,6 +184,8 @@ func (p *Peer) Log() log.Logger {
 }
 
 func (p *Peer) run() (remoteRequested bool, err error) {
+	//当平p模块对一个节点握手协议处理完后，addpeer队列接收到，然后调用go srv.runPeer(p) 创建协程，最后调用这里
+	//在协里面维护本节点对于其他节点的链接。怎么维护呢：建立一个事件读写协程，以及管理协程。
 	var (
 		writeStart = make(chan struct{}, 1)
 		writeErr   = make(chan error, 1)
