@@ -156,7 +156,7 @@ func SetupGenesisBlock(db ethdb.Database, genesis *Genesis) (*params.ChainConfig
 
 	// Just commit the new block if there is no stored genesis block.
 	stored := GetCanonicalHash(db, 0)
-	if (stored == common.Hash{}) {
+	if (stored == common.Hash{}) {//创世区块不存在，需要写一个进去
 		if genesis == nil {
 			log.Info("Writing default main-net genesis block")
 			genesis = DefaultGenesisBlock()
@@ -263,6 +263,7 @@ func (g *Genesis) ToBlock(db ethdb.Database) *types.Block {
 // Commit writes the block and state of a genesis specification to the database.
 // The block is committed as the canonical head block.
 func (g *Genesis) Commit(db ethdb.Database) (*types.Block, error) {
+	//创建一个创世区块，然后分别写入对应的各个数据
 	block := g.ToBlock(db)
 	if block.Number().Sign() != 0 {
 		return nil, fmt.Errorf("can't commit genesis block with number > 0")

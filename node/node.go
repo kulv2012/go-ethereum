@@ -197,6 +197,7 @@ func (n *Node) Start() error {
 			ctx.services[kind] = s
 		}
 		// Construct and save the service
+		//服务的构建函数，可以参考RegisterEthService 里面的匿名函数, 会返回一个eth.New 的 Ethereum结构
 		service, err := constructor(ctx)
 		if err != nil {
 			return err
@@ -221,10 +222,12 @@ func (n *Node) Start() error {
 	// Start each of the services
 	started := []reflect.Type{}
 	//启动所有刚才创建的服务，分别调用， 如果出错就stop之前所有的服务并返回错误
+	//空跑的话默认为 eth.Ethereum 一个
 	for kind, service := range services {
 		// Start the next service, stopping all previous upon failure
 		//每个服务调用start的时候，都是传递了这个P2P结构，有意思，相当于P2P是一个底层传输基础
 		//以太坊的服务挂载包括 RegisterShhService， RegisterEthStatsService，RegisterEthService，RegisterDashboardService
+		//对于eth服务，service类型为eth.Ethereum 
 		if err := service.Start(running); err != nil {
 			for _, kind := range started {
 				services[kind].Stop()
@@ -669,6 +672,7 @@ func (n *Node) EventMux() *event.TypeMux {
 // previous can be found) from within the node's instance directory. If the node is
 // ephemeral, a memory database is returned.
 func (n *Node) OpenDatabase(name string, cache, handles int) (ethdb.Database, error) {
+	//返回一个LDBDatabase 结构，打开leveldb数据库文件
 	if n.config.DataDir == "" {
 		return ethdb.NewMemDatabase()
 	}

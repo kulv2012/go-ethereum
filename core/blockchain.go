@@ -85,6 +85,8 @@ type CacheConfig struct {
 // important to note that GetBlock can return any block and does not need to be
 // included in the canonical one where as GetBlockByNumber always represents the
 // canonical chain.
+//区块链的管理类，实现了对区块链的查询，管理，交易验证validator 以及执行processor
+//共识算法，以及各个LRU的缓存。 区块数据存储在db里面, 本模块提供get/set等操作
 type BlockChain struct {
 	chainConfig *params.ChainConfig // Chain & network configuration
 	cacheConfig *CacheConfig        // Cache configuration for pruning
@@ -93,6 +95,7 @@ type BlockChain struct {
 	triegc *prque.Prque   // Priority queue mapping block numbers to tries to gc
 	gcproc time.Duration  // Accumulates canonical block processing for trie dumping
 
+	// HeaderChain 指针, 全局一个, 用来管理header，实现了一系列操作函数
 	hc            *HeaderChain
 	rmLogsFeed    event.Feed
 	chainFeed     event.Feed
@@ -100,6 +103,7 @@ type BlockChain struct {
 	chainHeadFeed event.Feed
 	logsFeed      event.Feed
 	scope         event.SubscriptionScope
+	//指向创世区块
 	genesisBlock  *types.Block
 
 	mu      sync.RWMutex // global mutex for locking chain operations
@@ -110,10 +114,12 @@ type BlockChain struct {
 	currentBlock     atomic.Value // Current head of the block chain
 	currentFastBlock atomic.Value // Current head of the fast-sync chain (may be above the block chain!)
 
+	//下面是用来缓存高频的对象用的 , 底层还是用db来读取
 	stateCache   state.Database // State database to reuse between imports (contains state cache)
 	bodyCache    *lru.Cache     // Cache for the most recent block bodies
 	bodyRLPCache *lru.Cache     // Cache for the most recent block bodies in RLP encoded format
 	blockCache   *lru.Cache     // Cache for the most recent entire blocks
+	//代表异常的区块，待验证的
 	futureBlocks *lru.Cache     // future blocks are blocks added for later processing
 
 	quit    chan struct{} // blockchain quit channel
@@ -122,8 +128,13 @@ type BlockChain struct {
 	procInterrupt int32          // interrupt signaler for block processing
 	wg            sync.WaitGroup // chain processing wait group for shutting down
 
+	//engine 是共识算法的行为接口，里面包括VerifyHeaders等，所有跟验证区块有关的操作都是engine的工作。
+	//目前2种算法： pow的 Ethash 和 poa的Clique
 	engine    consensus.Engine
+	//BlockChain独有的Processor，Validator 两个接口
+	//执行交易对象用
 	processor Processor // block processor interface
+	//验证body数据成员是否有效
 	validator Validator // block and state validator interface
 	vmConfig  vm.Config
 
@@ -134,12 +145,15 @@ type BlockChain struct {
 // available in the database. It initialises the default Ethereum Validator and
 // Processor.
 func NewBlockChain(db ethdb.Database, cacheConfig *CacheConfig, chainConfig *params.ChainConfig, engine consensus.Engine, vmConfig vm.Config) (*BlockChain, error) {
+	//创建一个blcokchain, 里面包含了对于futureBlocks的处理，验证器，账户管理以及HeaderChain结构
+	//BlockChain 负责对区块进行管理，查询等.  另外还会开启协程专门处理futureBlocks的每隔5秒钟重新入链的操作
 	if cacheConfig == nil {
 		cacheConfig = &CacheConfig{
 			TrieNodeLimit: 256 * 1024 * 1024,
 			TrieTimeLimit: 5 * time.Minute,
 		}
 	}
+	//各种cache，都是LRU算法，用来加速hash查找用
 	bodyCache, _ := lru.New(bodyCacheLimit)
 	bodyRLPCache, _ := lru.New(bodyCacheLimit)
 	blockCache, _ := lru.New(blockCacheLimit)
@@ -149,9 +163,9 @@ func NewBlockChain(db ethdb.Database, cacheConfig *CacheConfig, chainConfig *par
 	bc := &BlockChain{
 		chainConfig:  chainConfig,
 		cacheConfig:  cacheConfig,
-		db:           db,
+		db:           db, //共享底层的leveldb
 		triegc:       prque.New(),
-		stateCache:   state.NewDatabase(db),
+		stateCache:   state.NewDatabase(db), //账户管理
 		quit:         make(chan struct{}),
 		bodyCache:    bodyCache,
 		bodyRLPCache: bodyRLPCache,
@@ -161,10 +175,13 @@ func NewBlockChain(db ethdb.Database, cacheConfig *CacheConfig, chainConfig *par
 		vmConfig:     vmConfig,
 		badBlocks:    badBlocks,
 	}
+	//创建一个验证器，验证区块哈西等是否OK
 	bc.SetValidator(NewBlockValidator(chainConfig, bc, engine))
+	//管理账户余额相关的
 	bc.SetProcessor(NewStateProcessor(chainConfig, bc, engine))
 
 	var err error
+	//创建一个 HeaderChain， 设置最新区块以及其他缓存结构
 	bc.hc, err = NewHeaderChain(db, chainConfig, engine, bc.getProcInterrupt)
 	if err != nil {
 		return nil, err
@@ -173,6 +190,7 @@ func NewBlockChain(db ethdb.Database, cacheConfig *CacheConfig, chainConfig *par
 	if bc.genesisBlock == nil {
 		return nil, ErrNoGenesis
 	}
+	//加载最新的当前block, header, 以及 fastblock指针，让他们都指向最新的一个区块或者区块头 
 	if err := bc.loadLastState(); err != nil {
 		return nil, err
 	}
@@ -190,6 +208,7 @@ func NewBlockChain(db ethdb.Database, cacheConfig *CacheConfig, chainConfig *par
 		}
 	}
 	// Take ownership of this particular state
+	//创建一个新的协程处理新的待入链的新区块，一般区块号会比较大，可能前面的区块还没广播给我
 	go bc.update()
 	return bc, nil
 }
@@ -201,6 +220,9 @@ func (bc *BlockChain) getProcInterrupt() bool {
 // loadLastState loads the last known chain state from the database. This method
 // assumes that the chain manager mutex is held.
 func (bc *BlockChain) loadLastState() error {
+	//查找到当前的最新区块，初始化一个state结构。然后设置 bc.currentBlock. 变量 
+	//同时重新设置headerchain里面的 bc.hc.SetCurrentHeader 以及 bc.currentFastBlock
+	//其实就是初始化了3个结构： currentBlock, bc.hc.SetCurrentHeader ,以及 bc.currentFastBlock 
 	// Restore the last known head block
 	head := GetHeadBlockHash(bc.db)
 	if head == (common.Hash{}) {
@@ -226,6 +248,7 @@ func (bc *BlockChain) loadLastState() error {
 	// Everything seems to be fine, set as the head block
 	bc.currentBlock.Store(currentBlock)
 
+	//重新设置一下当前currentheader, 上面设置了block， 下面开始设置一下最新的header部分
 	// Restore the last known head header
 	currentHeader := currentBlock.Header()
 	if head := GetHeadHeaderHash(bc.db); head != (common.Hash{}) {
@@ -671,6 +694,7 @@ func (bc *BlockChain) Stop() {
 }
 
 func (bc *BlockChain) procFutureBlocks() {
+	//处理新的待入链的新区块，一般区块号会比较大，可能前面的区块还没广播给我
 	blocks := make([]*types.Block, 0, bc.futureBlocks.Len())
 	for _, hash := range bc.futureBlocks.Keys() {
 		if block, exist := bc.futureBlocks.Peek(hash); exist {
@@ -678,6 +702,7 @@ func (bc *BlockChain) procFutureBlocks() {
 		}
 	}
 	if len(blocks) > 0 {
+		//将区块排序，然后一个个调用InsertChain 将区块入链
 		types.BlockBy(types.Number).Sort(blocks)
 
 		// Insert one by one as chain insertion needs contiguous ancestry between blocks
@@ -997,6 +1022,7 @@ func (bc *BlockChain) WriteBlockWithState(block *types.Block, receipts []*types.
 //
 // After insertion is done, all accumulated events will be fired.
 func (bc *BlockChain) InsertChain(chain types.Blocks) (int, error) {
+	//将chain 插入到权威链表里面，返回有问题的队列
 	n, events, logs, err := bc.insertChain(chain)
 	bc.PostChainEvents(events, logs)
 	return n, err
@@ -1041,6 +1067,7 @@ func (bc *BlockChain) insertChain(chain types.Blocks) (int, []interface{}, []*ty
 		headers[i] = block.Header()
 		seals[i] = true
 	}
+	//逐一验证header是否OK, 异步开始去验证参数里面的所有headers.结果会按照顺序放入results管道里
 	abort, results := bc.engine.VerifyHeaders(bc, headers, seals)
 	defer close(abort)
 
@@ -1059,6 +1086,7 @@ func (bc *BlockChain) insertChain(chain types.Blocks) (int, []interface{}, []*ty
 		// Wait for the block's verification to complete
 		bstart := time.Now()
 
+		//获取header验证结果，如果成功就进行body部分的检查，否则报错
 		err := <-results
 		if err == nil {
 			err = bc.Validator().ValidateBody(block)
@@ -1151,6 +1179,7 @@ func (bc *BlockChain) insertChain(chain types.Blocks) (int, []interface{}, []*ty
 		}
 		proctime := time.Since(bstart)
 
+		//正式将这区块写入区块链里面
 		// Write the block to the chain and get the status.
 		status, err := bc.WriteBlockWithState(block, receipts, state)
 		if err != nil {
@@ -1370,11 +1399,14 @@ func (bc *BlockChain) PostChainEvents(events []interface{}, logs []*types.Log) {
 }
 
 func (bc *BlockChain) update() {
+	//循环每5秒去处理带入列的一些异常到来的，新的区块
+	//处理新的待入链的新区块，一般区块号会比较大，可能前面的区块还没广播给我
 	futureTimer := time.NewTicker(5 * time.Second)
 	defer futureTimer.Stop()
 	for {
 		select {
 		case <-futureTimer.C:
+			//procFutureBlocks任务 去检查待入链的节点
 			bc.procFutureBlocks()
 		case <-bc.quit:
 			return

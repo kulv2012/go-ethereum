@@ -46,15 +46,19 @@ const (
 // a part of either structure.
 // It is not thread safe either, the encapsulating chain structures should do
 // the necessary mutex locking/unlocking.
+//主要是有一个currentHeader 指向当前最新的header，以及其他缓存结构。
+//这个结构用来对header做操作, 实现了各种get**header接口
 type HeaderChain struct {
 	config *params.ChainConfig
 
 	chainDb       ethdb.Database
 	genesisHeader *types.Header
 
+	//默认指向第一个 创世区块，如果 GetHeadBlockHash 从数据库查到新的区块了就设置为最新区块
 	currentHeader     atomic.Value // Current head of the header chain (may be above the block chain!)
 	currentHeaderHash common.Hash  // Hash of the current head of the header chain (prevent recomputing all the time)
 
+	//缓存变量，用来加速查找用, 缓存高频使用的对象
 	headerCache *lru.Cache // Cache for the most recent block headers
 	tdCache     *lru.Cache // Cache for the most recent block total difficulties
 	numberCache *lru.Cache // Cache for the most recent block numbers
@@ -62,6 +66,7 @@ type HeaderChain struct {
 	procInterrupt func() bool
 
 	rand   *mrand.Rand
+	//共识算法引擎
 	engine consensus.Engine
 }
 
@@ -70,6 +75,7 @@ type HeaderChain struct {
 //  procInterrupt points to the parent's interrupt semaphore
 //  wg points to the parent's shutdown wait group
 func NewHeaderChain(chainDb ethdb.Database, config *params.ChainConfig, engine consensus.Engine, procInterrupt func() bool) (*HeaderChain, error) {
+	//BlockChain里面的hc成员，用来管理对于headchain的读写方法，get,set，del等
 	headerCache, _ := lru.New(headerCacheLimit)
 	tdCache, _ := lru.New(tdCacheLimit)
 	numberCache, _ := lru.New(numberCacheLimit)
@@ -96,6 +102,7 @@ func NewHeaderChain(chainDb ethdb.Database, config *params.ChainConfig, engine c
 		return nil, ErrNoGenesis
 	}
 
+	//默认指向第一个 创世区块，如果 GetHeadBlockHash 从数据库查到新的区块了就设置为最新区块
 	hc.currentHeader.Store(hc.genesisHeader)
 	if head := GetHeadBlockHash(chainDb); head != (common.Hash{}) {
 		if chead := hc.GetHeaderByHash(head); chead != nil {

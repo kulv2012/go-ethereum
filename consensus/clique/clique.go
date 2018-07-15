@@ -244,6 +244,7 @@ func (c *Clique) VerifyHeader(chain consensus.ChainReader, header *types.Header,
 // method returns a quit channel to abort the operations and a results channel to
 // retrieve the async verifications (the order is that of the input slice).
 func (c *Clique) VerifyHeaders(chain consensus.ChainReader, headers []*types.Header, seals []bool) (chan<- struct{}, <-chan error) {
+	//异步开始去验证参数里面的所有headers， 将结果放入results返回值的管道里面，上层就可以并行处理去验证body了
 	abort := make(chan struct{})
 	results := make(chan error, len(headers))
 

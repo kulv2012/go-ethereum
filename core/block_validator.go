@@ -49,10 +49,13 @@ func NewBlockValidator(config *params.ChainConfig, blockchain *BlockChain, engin
 // header's transaction and uncle roots. The headers are assumed to be already
 // validated at this point.
 func (v *BlockValidator) ValidateBody(block *types.Block) error {
+	//验证一个区块的合法性
 	// Check whether the block's known, and if not, that it's linkable
 	if v.bc.HasBlockAndState(block.Hash(), block.NumberU64()) {
+		//不存在，或者状态不对，返回报错
 		return ErrKnownBlock
 	}
+	//检查父块hash是否存在
 	if !v.bc.HasBlockAndState(block.ParentHash(), block.NumberU64()-1) {
 		if !v.bc.HasBlock(block.ParentHash(), block.NumberU64()-1) {
 			return consensus.ErrUnknownAncestor
@@ -60,7 +63,7 @@ func (v *BlockValidator) ValidateBody(block *types.Block) error {
 		return consensus.ErrPrunedAncestor
 	}
 	// Header validity is known at this point, check the uncles and transactions
-	header := block.Header()
+	header := block.Header() //拷贝一个新的header出来
 	if err := v.engine.VerifyUncles(v.bc, block); err != nil {
 		return err
 	}

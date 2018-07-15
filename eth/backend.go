@@ -68,15 +68,20 @@ type Ethereum struct {
 	stopDbUpgrade func() error // stop chain db sequential key upgrade
 
 	// Handlers
+	//未处理交易
 	txPool          *core.TxPool
+	//区块链结构来管理所有的区块，包括区块头，区块体，以及账户state
+	//涵盖了区块的验证，入链等所有操作
 	blockchain      *core.BlockChain
+	//协议管理器，用来管理跟其他节点的交互
 	protocolManager *ProtocolManager
-	lesServer       LesServer  //轻量级节点
+	lesServer       LesServer  //给轻量级节点服务的，作用后面加
 
-	// DB interfaces
+	// DB interfaces, leveldb实例
 	chainDb ethdb.Database // Block chain database
 
 	eventMux       *event.TypeMux
+	//共识算法引擎
 	engine         consensus.Engine
 	accountManager *accounts.Manager
 
@@ -110,17 +115,21 @@ func New(ctx *node.ServiceContext, config *Config) (*Ethereum, error) {
 	if !config.SyncMode.IsValid() {
 		return nil, fmt.Errorf("invalid sync mode %d", config.SyncMode)
 	}
+	//返回一个LDBDatabase 结构，打开leveldb数据库文件
 	chainDb, err := CreateDB(ctx, config, "chaindata")
 	if err != nil {
 		return nil, err
 	}
+	//检查是否需要升级等
 	stopDbUpgrade := upgradeDeduplicateData(chainDb)
+	//尝试看一下，如果数据库为空就设置一下创世区块
 	chainConfig, genesisHash, genesisErr := core.SetupGenesisBlock(chainDb, config.Genesis)
 	if _, ok := genesisErr.(*params.ConfigCompatError); genesisErr != nil && !ok {
 		return nil, genesisErr
 	}
 	log.Info("Initialised chain configuration", "config", chainConfig)
 
+	//新建一个最重要的以太坊结构，包含区块链的leveldb存储体以及相关的其他结构
 	eth := &Ethereum{
 		config:         config,
 		chainDb:        chainDb,
@@ -150,6 +159,7 @@ func New(ctx *node.ServiceContext, config *Config) (*Ethereum, error) {
 		vmConfig    = vm.Config{EnablePreimageRecording: config.EnablePreimageRecording}
 		cacheConfig = &core.CacheConfig{Disabled: config.NoPruning, TrieNodeLimit: config.TrieCache, TrieTimeLimit: config.TrieTimeout}
 	)
+	//创建 一个BlockChain 来管理所有的区块，包括区块头，区块体，以及账户state
 	eth.blockchain, err = core.NewBlockChain(chainDb, cacheConfig, eth.chainConfig, eth.engine, vmConfig)
 	if err != nil {
 		return nil, err
@@ -165,11 +175,14 @@ func New(ctx *node.ServiceContext, config *Config) (*Ethereum, error) {
 	if config.TxPool.Journal != "" {
 		config.TxPool.Journal = ctx.ResolvePath(config.TxPool.Journal)
 	}
+	//待处理交易池
 	eth.txPool = core.NewTxPool(config.TxPool, eth.chainConfig, eth.blockchain)
 
+	//协议管理器，用来跟其他节点交互用的。  里面实现了跟P2P模块的网络数据交互
 	if eth.protocolManager, err = NewProtocolManager(eth.chainConfig, config.SyncMode, config.NetworkId, eth.eventMux, eth.txPool, eth.engine, eth.blockchain, chainDb); err != nil {
 		return nil, err
 	}
+	//初始化矿工
 	eth.miner = miner.New(eth, eth.chainConfig, eth.EventMux(), eth.engine)
 	eth.miner.SetExtra(makeExtraData(config.ExtraData))
 
@@ -202,6 +215,7 @@ func makeExtraData(extra []byte) []byte {
 
 // CreateDB creates the chain database.
 func CreateDB(ctx *node.ServiceContext, config *Config, name string) (ethdb.Database, error) {
+	//返回一个LDBDatabase 结构，打开leveldb数据库文件
 	db, err := ctx.OpenDatabase(name, config.DatabaseCache, config.DatabaseHandles)
 	if err != nil {
 		return nil, err
@@ -214,6 +228,7 @@ func CreateDB(ctx *node.ServiceContext, config *Config, name string) (ethdb.Data
 
 // CreateConsensusEngine creates the required type of consensus engine instance for an Ethereum service
 func CreateConsensusEngine(ctx *node.ServiceContext, config *ethash.Config, chainConfig *params.ChainConfig, db ethdb.Database) consensus.Engine {
+	//创建一个共识协议引擎，POW 的Ethash 和 POS的 Clique
 	// If proof-of-authority is requested, set it up
 	if chainConfig.Clique != nil {
 		return clique.New(chainConfig.Clique, db)

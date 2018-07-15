@@ -80,6 +80,7 @@ type LightEthereum struct {
 }
 
 func New(ctx *node.ServiceContext, config *eth.Config) (*LightEthereum, error) {
+	//轻节点的创建函数，在 RegisterEthService 里面设置的constructor 创建器，在node/node.go里面调用。
 	chainDb, err := eth.CreateDB(ctx, config, "lightchaindata")
 	if err != nil {
 		return nil, err

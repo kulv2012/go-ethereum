@@ -22,8 +22,11 @@ import "fmt"
 type SyncMode int
 
 const (
+	//全同步完整区块信息
 	FullSync  SyncMode = iota // Synchronise the entire blockchain history from full blocks
+	//先同步header部分，然后在慢慢同步其他内容
 	FastSync                  // Quickly download the headers, full sync only at the chain head
+	//纯轻节点，跟比特币一样
 	LightSync                 // Download only the headers and terminate afterwards
 )
 

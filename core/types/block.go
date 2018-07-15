@@ -69,16 +69,25 @@ func (n *BlockNonce) UnmarshalText(input []byte) error {
 
 // Header represents a block header in the Ethereum blockchain.
 type Header struct {
+	//指向父区块parentBlock的指针
 	ParentHash  common.Hash    `json:"parentHash"       gencodec:"required"`
 	UncleHash   common.Hash    `json:"sha3Uncles"       gencodec:"required"`
+	//挖掘出这个区块的作者地址
 	Coinbase    common.Address `json:"miner"            gencodec:"required"`
+	//
 	Root        common.Hash    `json:"stateRoot"        gencodec:"required"`
+	//Block中 tx Tri 的根节点的RLP哈希值
 	TxHash      common.Hash    `json:"transactionsRoot" gencodec:"required"`
 	ReceiptHash common.Hash    `json:"receiptsRoot"     gencodec:"required"`
+	//Bloom过滤器用来快速判断一个参数Log对象是否存在于一组已知的Log集合中
 	Bloom       Bloom          `json:"logsBloom"        gencodec:"required"`
+	//区块难度
 	Difficulty  *big.Int       `json:"difficulty"       gencodec:"required"`
+	//序号
 	Number      *big.Int       `json:"number"           gencodec:"required"`
+	//消耗的gas上限
 	GasLimit    uint64         `json:"gasLimit"         gencodec:"required"`
+	//实际上消耗的gas总和，所有的transaction执行的小号
 	GasUsed     uint64         `json:"gasUsed"          gencodec:"required"`
 	Time        *big.Int       `json:"timestamp"        gencodec:"required"`
 	Extra       []byte         `json:"extraData"        gencodec:"required"`
@@ -240,6 +249,7 @@ func NewBlockWithHeader(header *Header) *Block {
 // CopyHeader creates a deep copy of a block header to prevent side effects from
 // modifying a header variable.
 func CopyHeader(h *Header) *Header {
+	//手动深拷贝一下区块 头,  由于下面的字段都是指针，所以必须深拷贝，重新new一下
 	cpy := *h
 	if cpy.Time = new(big.Int); h.Time != nil {
 		cpy.Time.Set(h.Time)
