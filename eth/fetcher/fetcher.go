@@ -106,6 +106,9 @@ type inject struct {
 // Fetcher is responsible for accumulating block announcements from various peers
 // and scheduling them for retrieval.
 type Fetcher struct {
+	//负责对新来的区块进行插入队列操作，上层为 ProtocolManager.handleMsg里面，收到对端发送的NewBlockMsg区块消息后
+	//会调用 pm.fetcher.Enqueue 来插入管道
+	//可以理解为收集下载回来的区块，放到一起后触发入链
 	// Various event channels
 	notify chan *announce
 	inject chan *inject
@@ -130,10 +133,12 @@ type Fetcher struct {
 	queued map[common.Hash]*inject // Set of already queued blocks (to dedup imports)
 
 	// Callbacks
+	/// 各种回调函数，是在 NewProtocolManager 里面设置的匿名函数
 	getBlock       blockRetrievalFn   // Retrieves a block from the local chain
 	verifyHeader   headerVerifierFn   // Checks if a block's headers have a valid proof of work
 	broadcastBlock blockBroadcasterFn // Broadcasts a block to connected peers
 	chainHeight    chainHeightFn      // Retrieves the current chain's height
+	//区块插入函数， 实际上最后调用的是 manager.blockchain.InsertChain(blocks)来插入区块
 	insertChain    chainInsertFn      // Injects a batch of blocks into the chain
 	dropPeer       peerDropFn         // Drops a peer for misbehaving
 
@@ -310,6 +315,7 @@ func (f *Fetcher) loop() {
 				f.forgetBlock(hash)
 				continue
 			}
+			//插入区块 到区块链 最后调用InsertChain
 			f.insert(op.origin, op.block)
 		}
 		// Wait for an outside event to occur
@@ -599,6 +605,7 @@ func (f *Fetcher) rescheduleComplete(complete *time.Timer) {
 // enqueue schedules a new future import operation, if the block to be imported
 // has not yet been seen.
 func (f *Fetcher) enqueue(peer string, block *types.Block) {
+	// loop 协程 会调用这里将下载好的区块放入到队列queued里面，然后 循环会调用insert()来讲区块插入区块链里面
 	hash := block.Hash()
 
 	// Ensure the peer isn't DOSing us

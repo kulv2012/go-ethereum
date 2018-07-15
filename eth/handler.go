@@ -74,7 +74,12 @@ type ProtocolManager struct {
 	chainconfig *params.ChainConfig
 	maxPeers    int
 
+	//创建 一个BlockChain 来管理所有的区块，包括区块头，区块体，以及账户state
 	downloader *downloader.Downloader
+
+	//负责对新来的区块进行插入队列操作，可以理解为 downloader后面的一个下载获取器
+	//可以理解为收集下载回来的区块，放到一起后触发入链. 
+	//什么地方调用fetcher的呢？ ProtocolManager.handleMsg 会调用这里， 消息类型NewBlockMsg
 	fetcher    *fetcher.Fetcher
 	peers      *peerSet
 
@@ -103,7 +108,7 @@ func NewProtocolManager(config *params.ChainConfig, mode downloader.SyncMode, ne
 	manager := &ProtocolManager{
 		networkId:   networkId,
 		eventMux:    mux,
-		txpool:      txpool,
+		txpool:      txpool, //公用上层Etherem的待处理交易池
 		blockchain:  blockchain,
 		chainconfig: config,
 		peers:       newPeerSet(),
@@ -121,6 +126,7 @@ func NewProtocolManager(config *params.ChainConfig, mode downloader.SyncMode, ne
 		manager.fastSync = uint32(1)
 	}
 	// Initiate a sub-protocol for every implemented version we can handle
+	//目前就一个协议，eth . 不同节点之间通过协议来通信，互相传递消息
 	manager.SubProtocols = make([]p2p.Protocol, 0, len(ProtocolVersions))
 	for i, version := range ProtocolVersions {
 		// Skip protocol version if incompatible with the mode of operation
@@ -162,15 +168,18 @@ func NewProtocolManager(config *params.ChainConfig, mode downloader.SyncMode, ne
 	if len(manager.SubProtocols) == 0 {
 		return nil, errIncompatibleConfig
 	}
+	//下载器，用来下载同步区块
 	// Construct the different synchronisation mechanisms
 	manager.downloader = downloader.New(mode, chaindb, manager.eventMux, blockchain, nil, manager.removePeer)
 
+	//使用一个验证器来验证一个区块的头
 	validator := func(header *types.Header) error {
 		return engine.VerifyHeader(blockchain, header, true)
 	}
 	heighter := func() uint64 {
 		return blockchain.CurrentBlock().NumberU64()
 	}
+	//插入区块的函数，会直接调用参数blockchain的InsertChain来插入区块到链里面
 	inserter := func(blocks types.Blocks) (int, error) {
 		// If fast sync is running, deny importing weird blocks
 		if atomic.LoadUint32(&manager.fastSync) == 1 {
@@ -178,8 +187,10 @@ func NewProtocolManager(config *params.ChainConfig, mode downloader.SyncMode, ne
 			return 0, nil
 		}
 		atomic.StoreUint32(&manager.acceptTxs, 1) // Mark initial sync done on any fetcher import
-		return manager.blockchain.InsertChain(blocks)
+		return manager.blockchain.InsertChain(blocks) //最重要，插入区块链
 	}
+	//创建一个区块链的fetcher器，在download的后面， 上面设置的inserter 会被调用来插入manager.blockchain 的区块链数据库里面
+	//调用路径为： Fetcher.loop() ->Fetcher.enqueue()-> insertChain() -> inserter() -> manager.blockchain.InsertChain
 	manager.fetcher = fetcher.New(blockchain.GetBlockByHash, validator, manager.BroadcastBlock, heighter, inserter, manager.removePeer)
 
 	return manager, nil
@@ -640,6 +651,7 @@ func (pm *ProtocolManager) handleMsg(p *peer) error {
 		}
 
 	case msg.Code == NewBlockMsg:
+		//有新的区块到来，将其放入fetcher的队列里面，后面的loop协程会进行后面的处理
 		// Retrieve and decode the propagated block
 		var request newBlockData
 		if err := msg.Decode(&request); err != nil {
@@ -650,6 +662,7 @@ func (pm *ProtocolManager) handleMsg(p *peer) error {
 
 		// Mark the peer as owning the block and schedule it for import
 		p.MarkBlock(request.Block.Hash())
+		//将这个新到来的区块放入管道， fetcher会进行管理，最后会调用到 manager.blockchain.InsertChain(blocks) 来插入区块到链里面
 		pm.fetcher.Enqueue(p.id, request.Block)
 
 		// Assuming the block is importable by the peer, but possibly not yet done so,

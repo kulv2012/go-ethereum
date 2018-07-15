@@ -178,7 +178,8 @@ func New(ctx *node.ServiceContext, config *Config) (*Ethereum, error) {
 	//待处理交易池
 	eth.txPool = core.NewTxPool(config.TxPool, eth.chainConfig, eth.blockchain)
 
-	//协议管理器，用来跟其他节点交互用的。  里面实现了跟P2P模块的网络数据交互
+	//协议管理器，用来跟其他节点交互用的。  里面实现了跟P2P模块的网络数据交互, 
+	//也会通过其fetcher来调用manager.blockchain.InsertChain(blocks)
 	if eth.protocolManager, err = NewProtocolManager(eth.chainConfig, config.SyncMode, config.NetworkId, eth.eventMux, eth.txPool, eth.engine, eth.blockchain, chainDb); err != nil {
 		return nil, err
 	}
