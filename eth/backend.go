@@ -109,6 +109,8 @@ func (s *Ethereum) AddLesServer(ls LesServer) {
 // New creates a new Ethereum object (including the
 // initialisation of the common Ethereum object)
 func New(ctx *node.ServiceContext, config *Config) (*Ethereum, error) {
+	//新建一个以太坊eth服务， 作为一个服务service出现，由RegisterEthService 来注册匿名函数
+	//最后会调用eth.New(ctx, cfg)来创建一个fullnode节点
 	if config.SyncMode == downloader.LightSync {
 		return nil, errors.New("can't run eth.Ethereum in light sync mode, use les.LightEthereum")
 	}
@@ -136,6 +138,7 @@ func New(ctx *node.ServiceContext, config *Config) (*Ethereum, error) {
 		chainConfig:    chainConfig,
 		eventMux:       ctx.EventMux,
 		accountManager: ctx.AccountManager,
+		//创建一个共识协议引擎
 		engine:         CreateConsensusEngine(ctx, &config.Ethash, chainConfig, chainDb),
 		shutdownChan:   make(chan bool),
 		stopDbUpgrade:  stopDbUpgrade,
@@ -170,6 +173,7 @@ func New(ctx *node.ServiceContext, config *Config) (*Ethereum, error) {
 		eth.blockchain.SetHead(compat.RewindTo)
 		core.WriteChainConfig(chainDb, genesisHash, chainConfig)
 	}
+	//bloom过滤器，用来快速查找
 	eth.bloomIndexer.Start(eth.blockchain)
 
 	if config.TxPool.Journal != "" {
@@ -178,8 +182,7 @@ func New(ctx *node.ServiceContext, config *Config) (*Ethereum, error) {
 	//待处理交易池
 	eth.txPool = core.NewTxPool(config.TxPool, eth.chainConfig, eth.blockchain)
 
-	//协议管理器，用来跟其他节点交互用的。  里面实现了跟P2P模块的网络数据交互, 
-	//也会通过其fetcher来调用manager.blockchain.InsertChain(blocks)
+	//协议管理器，用来跟其他节点交互用的。  里面实现了跟P2P模块的网络数据交互
 	if eth.protocolManager, err = NewProtocolManager(eth.chainConfig, config.SyncMode, config.NetworkId, eth.eventMux, eth.txPool, eth.engine, eth.blockchain, chainDb); err != nil {
 		return nil, err
 	}
@@ -321,6 +324,7 @@ func (s *Ethereum) ResetWithGenesisBlock(gb *types.Block) {
 }
 
 func (s *Ethereum) Etherbase() (eb common.Address, err error) {
+	//返回矿工账号，如果以及设置了旷工账号则直接返回，否则取第0个账号为挖矿收益的账号
 	s.lock.RLock()
 	etherbase := s.etherbase
 	s.lock.RUnlock()
@@ -345,6 +349,7 @@ func (s *Ethereum) Etherbase() (eb common.Address, err error) {
 
 // set in js console via admin interface or wrapper from cli flags
 func (self *Ethereum) SetEtherbase(etherbase common.Address) {
+	//设置矿工账号
 	self.lock.Lock()
 	self.etherbase = etherbase
 	self.lock.Unlock()
@@ -405,6 +410,7 @@ func (s *Ethereum) Protocols() []p2p.Protocol {
 // Start implements node.Service, starting all internal goroutines needed by the
 // Ethereum protocol implementation.
 func (s *Ethereum) Start(srvr *p2p.Server) error {
+	//node.Start() 会逐一调用各个service的Start函数来启动对应的服务。
 	// Start the bloom bits servicing goroutines
 	s.startBloomHandlers()
 
@@ -419,7 +425,9 @@ func (s *Ethereum) Start(srvr *p2p.Server) error {
 		}
 		maxPeers -= s.config.LightPeers
 	}
+	//启动协议管理器，里面会启动各个后台协程，比如fetcher
 	// Start the networking layer and the light server if requested
+	//启动各个协议广播协程，交易广播，挖矿广播，区块同步等协程
 	s.protocolManager.Start(maxPeers)
 	if s.lesServer != nil {
 		s.lesServer.Start(srvr)

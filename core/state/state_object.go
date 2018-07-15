@@ -61,6 +61,7 @@ func (self Storage) Copy() Storage {
 // Account values can be accessed and modified through the object.
 // Finally, call CommitTrie to write the modified storage trie into a database.
 type stateObject struct {
+	//stateObject代表一个账户的相关结构，地址，hash等。 
 	address  common.Address
 	addrHash common.Hash // hash of ethereum address of the account
 	data     Account
@@ -106,6 +107,7 @@ type Account struct {
 
 // newObject creates a state object.
 func newObject(db *StateDB, address common.Address, data Account, onDirty func(addr common.Address)) *stateObject {
+	//创建一个新的地址结构
 	if data.Balance == nil {
 		data.Balance = new(big.Int)
 	}
@@ -274,14 +276,17 @@ func (c *stateObject) SubBalance(amount *big.Int) {
 }
 
 func (self *stateObject) SetBalance(amount *big.Int) {
+	//加个日志
 	self.db.journal = append(self.db.journal, balanceChange{
 		account: &self.address,
 		prev:    new(big.Int).Set(self.data.Balance),
 	})
+	//更新数目
 	self.setBalance(amount)
 }
 
 func (self *stateObject) setBalance(amount *big.Int) {
+	//更新账户余额
 	self.data.Balance = amount
 	if self.onDirty != nil {
 		self.onDirty(self.Address())

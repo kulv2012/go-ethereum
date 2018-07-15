@@ -313,6 +313,7 @@ func (d *Downloader) UnregisterPeer(id string) error {
 // Synchronise tries to sync up our local block chain with a remote peer, both
 // adding various sanity checks as well as wrapping it with various log entries.
 func (d *Downloader) Synchronise(id string, head common.Hash, td *big.Int, mode SyncMode) error {
+	//ProtocolManager) synchronise 收到一个新节点链接上来后，会调用synchronise 最后调用到这里来开启同步
 	err := d.synchronise(id, head, td, mode)
 	switch err {
 	case nil:

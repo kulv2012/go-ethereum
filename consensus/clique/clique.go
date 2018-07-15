@@ -250,6 +250,7 @@ func (c *Clique) VerifyHeaders(chain consensus.ChainReader, headers []*types.Hea
 
 	go func() {
 		for i, header := range headers {
+			//一个个处理，结果放入管道
 			err := c.verifyHeader(chain, header, headers[:i])
 
 			select {

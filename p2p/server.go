@@ -686,7 +686,6 @@ running:
 				// The handshakes are done and it passed all checks.
 				//空跑的话就这两个协议，eth: {Name:eth Version:63 Length:17 Run:0xae30b0 NodeInfo:0xae3300 PeerInfo:0xae3360} {Name:eth Version:62 Length:8 Run:0xae30b0 NodeInfo:0xae3300 PeerInfo:0xae3360}
 				p := newPeer(c, srv.Protocols) //创建一个peer结构。
-				fmt.Printf("Protocols %+v\n" , srv.Protocols )
 				// If message events are enabled, pass the peerFeed
 				// to the peer
 				if srv.EnableMsgEvents {

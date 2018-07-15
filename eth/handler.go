@@ -63,6 +63,8 @@ func errResp(code errCode, format string, v ...interface{}) error {
 	return fmt.Errorf("%v - %v", code, fmt.Sprintf(format, v...))
 }
 
+//协议管理协程，里面会管理交易池，区块下载器downloader， 以及新区块收集器fetcher， 
+//同时会处理新节点连接事件，以及区块同步等任务。 
 type ProtocolManager struct {
 	networkId uint64
 
@@ -145,6 +147,7 @@ func NewProtocolManager(config *params.ChainConfig, mode downloader.SyncMode, ne
 				peer := manager.newPeer(int(version), p, rw)
 				select {
 					//newPeerCh 似乎没什么用？ 触发的管道在ProtocolManager.syncer()
+					//插入一条消息后，会触发pm.synchronise 进行同步
 				case manager.newPeerCh <- peer:
 					manager.wg.Add(1)
 					defer manager.wg.Done()
@@ -216,20 +219,28 @@ func (pm *ProtocolManager) removePeer(id string) {
 }
 
 func (pm *ProtocolManager) Start(maxPeers int) {
+	//启动各个协议广播协程，交易广播，挖矿广播，区块同步等协程
 	pm.maxPeers = maxPeers
 
 	// broadcast transactions
 	pm.txCh = make(chan core.TxPreEvent, txChanSize)
 	pm.txSub = pm.txpool.SubscribeTxPreEvent(pm.txCh)
+
+	//启动交易广播协程
 	go pm.txBroadcastLoop()
 
+	//启动挖到的新区块广播协程，这个还挺重要的，你不广播就白干了
 	// broadcast mined blocks
 	pm.minedBlockSub = pm.eventMux.Subscribe(core.NewMinedBlockEvent{})
 	go pm.minedBroadcastLoop()
 
 	// start sync handlers
+	//启动fetcher 协程来收集新区块，进行整理
+	//开启fetcher，这样handleMsg收到的新区块将会被收集起来然后整理，最后插入区块链数据库
 	go pm.syncer()
-	//开启交易同步现成，主要是发送交易给别人。 一个新连接到来的时候，会调用到syncTransactions() 来将我的待处理交易同步给对方
+
+	//开启交易同步协程，主要是发送交易给别人。 一个新连接到来的时候，
+	//会调用到syncTransactions() 来将我的待处理交易同步给对方
 	go pm.txsyncLoop()
 }
 
@@ -715,7 +726,9 @@ func (pm *ProtocolManager) handleMsg(p *peer) error {
 // BroadcastBlock will either propagate a block to a subset of it's peers, or
 // will only announce it's availability (depending what's requested).
 func (pm *ProtocolManager) BroadcastBlock(block *types.Block, propagate bool) {
+	//将我的block广播给其他节点， 
 	hash := block.Hash()
+	//找出没有这个区块的其他节点，然后给他们广播我这个新的区块
 	peers := pm.peers.PeersWithoutBlock(hash)
 
 	// If propagation is requested, send to a subset of the peer

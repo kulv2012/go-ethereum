@@ -50,10 +50,12 @@ var (
 // * Contracts
 // * Accounts
 type StateDB struct {
-	db   Database
+	db   Database   //数据库为第三级缓存
+	//trie作为第二级缓存 
 	trie Trie
 
 	// This map holds 'live' objects, which will get modified while processing a state transition.
+	//内存里的账户缓存，一级缓存
 	stateObjects      map[common.Address]*stateObject
 	stateObjectsDirty map[common.Address]struct{}
 
@@ -74,6 +76,7 @@ type StateDB struct {
 
 	preimages map[common.Hash][]byte
 
+	//日志记录
 	// Journal of state modifications. This is the backbone of
 	// Snapshot and RevertToSnapshot.
 	journal        journal
@@ -360,6 +363,7 @@ func (self *StateDB) deleteStateObject(stateObject *stateObject) {
 // Retrieve a state object given my the address. Returns nil if not found.
 func (self *StateDB) getStateObject(addr common.Address) (stateObject *stateObject) {
 	// Prefer 'live' objects.
+	//获取一个地址对应的账户，先看内存里面有没有stateObjects
 	if obj := self.stateObjects[addr]; obj != nil {
 		if obj.deleted {
 			return nil
@@ -367,6 +371,7 @@ func (self *StateDB) getStateObject(addr common.Address) (stateObject *stateObje
 		return obj
 	}
 
+	//如果内存没有，这应该是一个底层结构，那么从trie树查询一下这地址是否存在
 	// Load the object from the database.
 	enc, err := self.trie.TryGet(addr[:])
 	if len(enc) == 0 {
@@ -379,6 +384,7 @@ func (self *StateDB) getStateObject(addr common.Address) (stateObject *stateObje
 		return nil
 	}
 	// Insert into the live set.
+	//放入内存然后返回
 	obj := newObject(self, addr, data, self.MarkStateObjectDirty)
 	self.setStateObject(obj)
 	return obj
@@ -390,6 +396,7 @@ func (self *StateDB) setStateObject(object *stateObject) {
 
 // Retrieve a state object or create a new state object if nil
 func (self *StateDB) GetOrNewStateObject(addr common.Address) *stateObject {
+	//创建或者返回一个地址对应的账户
 	stateObject := self.getStateObject(addr)
 	if stateObject == nil || stateObject.deleted {
 		stateObject, _ = self.createObject(addr)

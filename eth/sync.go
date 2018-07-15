@@ -138,6 +138,7 @@ func (pm *ProtocolManager) txsyncLoop() {
 // downloading hashes and blocks as well as handling the announcement handler.
 func (pm *ProtocolManager) syncer() {
 	// Start and ensure cleanup of sync mechanisms
+	//开启fetcher，这样handleMsg收到的新区块将会被收集起来然后整理，最后插入区块链数据库
 	pm.fetcher.Start()
 	defer pm.fetcher.Stop()
 	defer pm.downloader.Terminate()
@@ -146,13 +147,16 @@ func (pm *ProtocolManager) syncer() {
 	forceSync := time.NewTicker(forceSyncCycle)
 	defer forceSync.Stop()
 
+	//监听新节点事件和forceSync强同步事件，后者定时10s运行
 	for {
 		select {
+			//有新的节点链接上来了，会通知这个管道，由NewProtocolManager里面的匿名函数触发
 		case <-pm.newPeerCh:
 			// Make sure we have peers to select from, then sync
 			if pm.peers.Len() < minDesiredPeerCount {
 				break
 			}
+			//开始同步
 			go pm.synchronise(pm.peers.BestPeer())
 
 		case <-forceSync.C:
@@ -167,6 +171,8 @@ func (pm *ProtocolManager) syncer() {
 
 // synchronise tries to sync up our local block chain with a remote peer.
 func (pm *ProtocolManager) synchronise(peer *peer) {
+	//syncer() 调用这里来找新节点同步最新区块信息，如果他有新区块的话
+	//下面检查我的本地和对方的最新曲库如果对方是新的则启动 pm.downloader.Synchronise 去下载
 	// Short circuit if no peers are available
 	if peer == nil {
 		return
@@ -175,6 +181,7 @@ func (pm *ProtocolManager) synchronise(peer *peer) {
 	currentBlock := pm.blockchain.CurrentBlock()
 	td := pm.blockchain.GetTd(currentBlock.Hash(), currentBlock.NumberU64())
 
+	//如果他的td比我的小，那不用问了，他的数据比我的还小
 	pHead, pTd := peer.Head()
 	if pTd.Cmp(td) <= 0 {
 		return
@@ -194,6 +201,7 @@ func (pm *ProtocolManager) synchronise(peer *peer) {
 		mode = downloader.FastSync
 	}
 	// Run the sync cycle, and disable fast sync if we've went past the pivot block
+	//启动同步下载器去同步区块
 	if err := pm.downloader.Synchronise(peer.id, pHead, pTd, mode); err != nil {
 		return
 	}
